@@ -10,10 +10,10 @@ use pharos::tunnel::{CloudflareBackend, Tunnel};
 #[command(
     name = "pharos",
     version,
-    about = "把你的 localhost 分享到全世界 — 免费、友好、属于每个人"
+    about = "Share your localhost with the world — free, friendly, for everyone"
 )]
 struct Args {
-    /// 端口号或本地地址，例如 3000 或 http://localhost:3000
+    /// Port or local address, e.g. 3000 or http://localhost:3000
     target: String,
 }
 
@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let target = cli::parse_target(&args.target)?;
 
-    println!("  {} 正在准备隧道...", "✓".green());
+    println!("  {} Setting up tunnel...", "✓".green());
     let bin = binary::ensure_binary().await?;
 
     let backend = CloudflareBackend { binary: bin };
@@ -32,13 +32,13 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            println!("\n  正在停止...");
+            println!("\n  Stopping...");
             let _ = handle.shutdown().await;
         }
         result = handle.wait() => {
             match result {
-                Ok(status) => eprintln!("  cloudflared 已退出 ({status})"),
-                Err(e) => eprintln!("  cloudflared 监控出错: {e}"),
+                Ok(status) => eprintln!("  cloudflared exited ({status})"),
+                Err(e) => eprintln!("  error while monitoring cloudflared: {e}"),
             }
         }
     }

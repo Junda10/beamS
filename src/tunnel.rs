@@ -58,10 +58,9 @@ impl Tunnel for CloudflareBackend {
             .map_err(|e| PharosError::TunnelStart(e.to_string()))?;
 
         // cloudflared prints the assigned URL to stderr.
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| PharosError::TunnelStart("无法读取 cloudflared 输出".to_string()))?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            PharosError::TunnelStart("could not read cloudflared output".to_string())
+        })?;
         let mut lines = BufReader::new(stderr).lines();
 
         let found = tokio::time::timeout(Duration::from_secs(30), async {
@@ -81,7 +80,7 @@ impl Tunnel for CloudflareBackend {
                 child,
             }),
             None => Err(PharosError::TunnelStart(
-                "cloudflared 退出但未提供公网地址".to_string(),
+                "cloudflared exited without providing a public URL".to_string(),
             )),
         }
     }

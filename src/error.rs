@@ -2,13 +2,13 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PharosError {
-    #[error("无法识别的输入 \"{0}\"，请给出端口号(如 3000)或地址(如 http://localhost:3000)")]
+    #[error("unrecognized target \"{0}\" — pass a port (e.g. 3000) or an address (e.g. http://localhost:3000)")]
     InvalidTarget(String),
-    #[error("下载 cloudflared 失败: {0}")]
+    #[error("failed to download cloudflared: {0}")]
     Download(String),
-    #[error("启动隧道失败: {0}")]
+    #[error("failed to start tunnel: {0}")]
     TunnelStart(String),
-    #[error("等待公网地址超时（30 秒内 cloudflared 未返回地址）")]
+    #[error("timed out waiting for the public URL (cloudflared returned no address within 30s)")]
     UrlTimeout,
     #[error(transparent)]
     Io(#[from] std::io::Error),

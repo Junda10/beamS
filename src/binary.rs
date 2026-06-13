@@ -13,7 +13,7 @@ pub fn cloudflared_asset(os: &str, arch: &str) -> Result<&'static str> {
         ("windows", "x86_64") => "cloudflared-windows-amd64.exe",
         _ => {
             return Err(PharosError::Download(format!(
-                "暂不支持的平台: {os}/{arch}"
+                "unsupported platform: {os}/{arch}"
             )))
         }
     })
@@ -27,7 +27,7 @@ pub fn download_url(asset: &str) -> String {
 /// Directory where pharos caches the downloaded cloudflared binary.
 pub fn cache_dir() -> Result<PathBuf> {
     let dirs = directories::ProjectDirs::from("dev", "pharos", "pharos")
-        .ok_or_else(|| PharosError::Download("无法定位缓存目录".to_string()))?;
+        .ok_or_else(|| PharosError::Download("could not locate a cache directory".to_string()))?;
     Ok(dirs.cache_dir().to_path_buf())
 }
 
@@ -100,7 +100,7 @@ fn extract_cloudflared_from_tgz(bytes: &[u8], dest: &Path) -> Result<()> {
         }
     }
     Err(PharosError::Download(
-        "压缩包中未找到 cloudflared".to_string(),
+        "cloudflared not found in the downloaded archive".to_string(),
     ))
 }
 
