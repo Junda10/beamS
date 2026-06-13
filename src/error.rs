@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum PharosError {
+pub enum BeamsError {
     #[error("unrecognized target \"{0}\" — pass a port (e.g. 3000) or an address (e.g. http://localhost:3000)")]
     InvalidTarget(String),
     #[error("failed to download cloudflared: {0}")]
@@ -14,4 +14,4 @@ pub enum PharosError {
     Io(#[from] std::io::Error),
 }
 
-pub type Result<T> = std::result::Result<T, PharosError>;
+pub type Result<T> = std::result::Result<T, BeamsError>;

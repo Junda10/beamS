@@ -4,8 +4,8 @@
 //   cargo test --test e2e -- --ignored --nocapture
 use std::time::Duration;
 
-use pharos::binary;
-use pharos::tunnel::{CloudflareBackend, Tunnel};
+use beams::binary;
+use beams::tunnel::{CloudflareBackend, Tunnel};
 
 #[tokio::test]
 #[ignore]

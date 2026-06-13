@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::{PharosError, Result};
+use crate::error::{BeamsError, Result};
 
 /// Map (OS, arch) — as given by `std::env::consts::{OS, ARCH}` — to the
 /// cloudflared release asset filename.
@@ -12,7 +12,7 @@ pub fn cloudflared_asset(os: &str, arch: &str) -> Result<&'static str> {
         ("linux", "aarch64") => "cloudflared-linux-arm64",
         ("windows", "x86_64") => "cloudflared-windows-amd64.exe",
         _ => {
-            return Err(PharosError::Download(format!(
+            return Err(BeamsError::Download(format!(
                 "unsupported platform: {os}/{arch}"
             )))
         }
@@ -24,10 +24,10 @@ pub fn download_url(asset: &str) -> String {
     format!("https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}")
 }
 
-/// Directory where pharos caches the downloaded cloudflared binary.
+/// Directory where beams caches the downloaded cloudflared binary.
 pub fn cache_dir() -> Result<PathBuf> {
-    let dirs = directories::ProjectDirs::from("dev", "pharos", "pharos")
-        .ok_or_else(|| PharosError::Download("could not locate a cache directory".to_string()))?;
+    let dirs = directories::ProjectDirs::from("dev", "beams", "beams")
+        .ok_or_else(|| BeamsError::Download("could not locate a cache directory".to_string()))?;
     Ok(dirs.cache_dir().to_path_buf())
 }
 
@@ -54,12 +54,12 @@ pub async fn ensure_binary() -> Result<PathBuf> {
 
     let bytes = reqwest::get(&url)
         .await
-        .map_err(|e| PharosError::Download(e.to_string()))?
+        .map_err(|e| BeamsError::Download(e.to_string()))?
         .error_for_status()
-        .map_err(|e| PharosError::Download(e.to_string()))?
+        .map_err(|e| BeamsError::Download(e.to_string()))?
         .bytes()
         .await
-        .map_err(|e| PharosError::Download(e.to_string()))?;
+        .map_err(|e| BeamsError::Download(e.to_string()))?;
 
     // Write to a temp path and atomically rename into place, so an interrupted
     // download can never leave a corrupt binary that a later run treats as valid.
@@ -99,7 +99,7 @@ fn extract_cloudflared_from_tgz(bytes: &[u8], dest: &Path) -> Result<()> {
             return Ok(());
         }
     }
-    Err(PharosError::Download(
+    Err(BeamsError::Download(
         "cloudflared not found in the downloaded archive".to_string(),
     ))
 }
@@ -144,7 +144,7 @@ mod tests {
     fn unsupported_platform_errors() {
         assert!(matches!(
             cloudflared_asset("plan9", "sparc"),
-            Err(PharosError::Download(_))
+            Err(BeamsError::Download(_))
         ));
     }
 

@@ -1,4 +1,4 @@
-use crate::error::{PharosError, Result};
+use crate::error::{BeamsError, Result};
 
 /// Normalize user input into a URL `cloudflared` can forward to.
 ///
@@ -8,7 +8,7 @@ use crate::error::{PharosError, Result};
 pub fn parse_target(input: &str) -> Result<String> {
     let input = input.trim();
     if input.is_empty() {
-        return Err(PharosError::InvalidTarget(input.to_string()));
+        return Err(BeamsError::InvalidTarget(input.to_string()));
     }
     if input.starts_with("http://") || input.starts_with("https://") {
         return Ok(input.to_string());
@@ -17,7 +17,7 @@ pub fn parse_target(input: &str) -> Result<String> {
     if input.chars().all(|c| c.is_ascii_digit()) {
         match input.parse::<u32>() {
             Ok(p) if (1..=65535).contains(&p) => return Ok(format!("http://localhost:{p}")),
-            _ => return Err(PharosError::InvalidTarget(input.to_string())),
+            _ => return Err(BeamsError::InvalidTarget(input.to_string())),
         }
     }
     // host:port without scheme -> assume http
@@ -26,7 +26,7 @@ pub fn parse_target(input: &str) -> Result<String> {
             return Ok(format!("http://{input}"));
         }
     }
-    Err(PharosError::InvalidTarget(input.to_string()))
+    Err(BeamsError::InvalidTarget(input.to_string()))
 }
 
 #[cfg(test)]
@@ -66,7 +66,7 @@ mod tests {
     fn port_zero_is_invalid() {
         assert!(matches!(
             parse_target("0"),
-            Err(PharosError::InvalidTarget(_))
+            Err(BeamsError::InvalidTarget(_))
         ));
     }
 
@@ -74,7 +74,7 @@ mod tests {
     fn garbage_is_invalid() {
         assert!(matches!(
             parse_target("not a target"),
-            Err(PharosError::InvalidTarget(_))
+            Err(BeamsError::InvalidTarget(_))
         ));
     }
 }

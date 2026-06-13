@@ -1,11 +1,11 @@
-use crate::error::{PharosError, Result};
+use crate::error::{BeamsError, Result};
 
 /// Render a URL as a scannable Unicode QR code string.
 pub fn render_qr(url: &str) -> Result<String> {
     use qrcode::render::unicode;
     use qrcode::QrCode;
     let code = QrCode::new(url.as_bytes())
-        .map_err(|e| PharosError::Download(format!("failed to render QR code: {e}")))?;
+        .map_err(|e| BeamsError::Download(format!("failed to render QR code: {e}")))?;
     Ok(code.render::<unicode::Dense1x2>().quiet_zone(true).build())
 }
 

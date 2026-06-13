@@ -1,14 +1,14 @@
 use clap::Parser;
 use owo_colors::OwoColorize;
 
-use pharos::binary;
-use pharos::cli;
-use pharos::output;
-use pharos::tunnel::{CloudflareBackend, Tunnel};
+use beams::binary;
+use beams::cli;
+use beams::output;
+use beams::tunnel::{CloudflareBackend, Tunnel};
 
 #[derive(Parser)]
 #[command(
-    name = "pharos",
+    name = "beams",
     version,
     about = "Share your localhost with the world — free, friendly, for everyone"
 )]

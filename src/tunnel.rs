@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
-use crate::error::{PharosError, Result};
+use crate::error::{BeamsError, Result};
 use crate::parser::extract_public_url;
 
 /// A running tunnel: owns the child process and exposes its public URL.
@@ -55,11 +55,11 @@ impl Tunnel for CloudflareBackend {
             // kill_on_drop ensures we don't leak an orphaned cloudflared process.
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| PharosError::TunnelStart(e.to_string()))?;
+            .map_err(|e| BeamsError::TunnelStart(e.to_string()))?;
 
         // cloudflared prints the assigned URL to stderr.
         let stderr = child.stderr.take().ok_or_else(|| {
-            PharosError::TunnelStart("could not read cloudflared output".to_string())
+            BeamsError::TunnelStart("could not read cloudflared output".to_string())
         })?;
         let mut lines = BufReader::new(stderr).lines();
 
@@ -72,14 +72,14 @@ impl Tunnel for CloudflareBackend {
             None
         })
         .await
-        .map_err(|_| PharosError::UrlTimeout)?;
+        .map_err(|_| BeamsError::UrlTimeout)?;
 
         match found {
             Some(url) => Ok(TunnelHandle {
                 public_url: url,
                 child,
             }),
-            None => Err(PharosError::TunnelStart(
+            None => Err(BeamsError::TunnelStart(
                 "cloudflared exited without providing a public URL".to_string(),
             )),
         }

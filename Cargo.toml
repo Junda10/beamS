@@ -1,5 +1,5 @@
 [package]
-name = "pharos"
+name = "beams"
 version = "0.1.0"
 edition = "2021"
 description = "Share your localhost to the world — free, friendly, for everyone."
@@ -7,11 +7,11 @@ license = "MIT"
 repository = "https://github.com/Junda10/beamS"
 
 [lib]
-name = "pharos"
+name = "beams"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pharos"
+name = "beams"
 path = "src/main.rs"
 
 [dependencies]

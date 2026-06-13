@@ -94,6 +94,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "beams"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "directories",
+ "flate2",
+ "owo-colors",
+ "qrcode",
+ "reqwest",
+ "tar",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -699,23 +716,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "pharos"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "clap",
- "directories",
- "flate2",
- "owo-colors",
- "qrcode",
- "reqwest",
- "tar",
- "thiserror 1.0.69",
- "tokio",
-]
 
 [[package]]
 name = "pin-project-lite"
