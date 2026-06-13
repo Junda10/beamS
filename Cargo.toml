@@ -1,0 +1,31 @@
+[package]
+name = "pharos"
+version = "0.1.0"
+edition = "2021"
+description = "Share your localhost to the world — free, friendly, for everyone."
+license = "MIT"
+repository = "https://github.com/Junda10/beamS"
+
+[lib]
+name = "pharos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pharos"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "signal", "time"] }
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+directories = "5"
+qrcode = "0.14"
+owo-colors = "4"
+anyhow = "1"
+thiserror = "1"
+async-trait = "0.1"
+flate2 = "1"
+tar = "0.4"
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
