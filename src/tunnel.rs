@@ -47,8 +47,13 @@ impl Tunnel for CloudflareBackend {
     async fn start(&self, target: &str) -> Result<TunnelHandle> {
         let mut child = Command::new(&self.binary)
             .args(["tunnel", "--no-autoupdate", "--url", target])
-            .stdout(Stdio::piped())
+            // cloudflared logs (incl. the assigned URL) go to stderr; we don't
+            // read stdout, so discard it rather than fill an undrained pipe.
+            .stdout(Stdio::null())
             .stderr(Stdio::piped())
+            // If `start` returns early (timeout / no URL) the handle is dropped;
+            // kill_on_drop ensures we don't leak an orphaned cloudflared process.
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| PharosError::TunnelStart(e.to_string()))?;
 

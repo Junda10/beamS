@@ -61,18 +61,22 @@ pub async fn ensure_binary() -> Result<PathBuf> {
         .await
         .map_err(|e| PharosError::Download(e.to_string()))?;
 
+    // Write to a temp path and atomically rename into place, so an interrupted
+    // download can never leave a corrupt binary that a later run treats as valid.
+    let tmp = path.with_extension("tmp");
     if asset.ends_with(".tgz") {
-        extract_cloudflared_from_tgz(&bytes, &path)?;
+        extract_cloudflared_from_tgz(&bytes, &tmp)?;
     } else {
-        std::fs::write(&path, &bytes)?;
+        std::fs::write(&tmp, &bytes)?;
     }
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
     }
 
+    std::fs::rename(&tmp, &path)?;
     Ok(path)
 }
 
