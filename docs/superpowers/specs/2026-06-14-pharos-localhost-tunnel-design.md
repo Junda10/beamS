@@ -1,13 +1,13 @@
-# beam — 一条命令把 localhost 分享到公网
+# pharos — 一条命令把 localhost 分享到公网
 
 > 设计文档 · 2026-06-14 · 状态：已通过，待实现
 
 ## 1. 目标与理念
 
-`beam` 是一个用 Rust 编写、**对所有人永久免费**的命令行工具。它把"将本地服务暴露到公网"这件事，从一堆复杂的隧道配置，简化成一条命令：
+`pharos` 是一个用 Rust 编写、**对所有人永久免费**的命令行工具。它把"将本地服务暴露到公网"这件事，从一堆复杂的隧道配置，简化成一条命令：
 
 ```
-beam 3000
+pharos 3000
 ```
 
 核心理念：
@@ -25,7 +25,7 @@ beam 3000
 单条命令、前台运行：
 
 ```
-$ beam 3000
+$ pharos 3000
 
   ✓ 正在准备隧道...
   ✓ 你的本地服务已上线！
@@ -40,7 +40,7 @@ $ beam 3000
 
 MVP 明确包含：
 
-- `beam <port>` 与 `beam <url>`（如 `beam http://localhost:3000`）两种调用形式
+- `pharos <port>` 与 `pharos <url>`（如 `pharos http://localhost:3000`）两种调用形式
 - 仅 HTTP/HTTPS 服务（占 90% 需求）
 - 随机临时网址（`*.trycloudflare.com`）
 - 首次运行**自动下载并缓存** `cloudflared` 二进制，用户零手动安装
@@ -85,7 +85,7 @@ MVP 明确**不**包含（见路线图）：固定子域名、自定义域名、
 
 - 检测当前 OS（macOS/Linux/Windows）与架构（x86_64/aarch64）
 - 从 Cloudflare 官方发行渠道下载对应平台的 `cloudflared`
-- 缓存到平台标准目录（用 `directories` crate，如 `~/.cache/beam/`）
+- 缓存到平台标准目录（用 `directories` crate，如 `~/.cache/pharos/`）
 - 校验下载完整性，赋予可执行权限
 - 缓存命中时跳过下载
 
@@ -128,7 +128,7 @@ MVP 明确**不**包含（见路线图）：固定子域名、自定义域名、
 
 | 版本 | 内容 |
 |------|------|
-| **v0.1 (MVP)** | `beam <port>`、Cloudflare 随机网址、HTTP、自动下载二进制、二维码、前台运行 |
+| **v0.1 (MVP)** | `pharos <port>`、Cloudflare 随机网址、HTTP、自动下载二进制、二维码、前台运行 |
 | **v0.2** | 固定自选子域名；TCP 支持（引入 `BoreBackend`，可暴露 SSH/数据库等） |
 | **v0.3** | 自定义域名（用户自有域名）；配置文件支持多隧道 |
 | **远期** | 后台守护进程、开机自启、多隧道管理 |
