@@ -45,8 +45,26 @@ pub struct CloudflareBackend {
 #[async_trait::async_trait]
 impl Tunnel for CloudflareBackend {
     async fn start(&self, target: &str) -> Result<TunnelHandle> {
+        // Rewrite the Host header sent to the local server to its own host:port.
+        // Dev servers (Vite, webpack-dev-server, …) reject requests whose Host
+        // is the public tunnel domain; sending `localhost:PORT` instead makes
+        // them work out of the box, matching ngrok/localtunnel behavior.
+        let host_header = target
+            .strip_prefix("http://")
+            .or_else(|| target.strip_prefix("https://"))
+            .unwrap_or(target)
+            .split('/')
+            .next()
+            .unwrap_or(target);
         let mut child = Command::new(&self.binary)
-            .args(["tunnel", "--no-autoupdate", "--url", target])
+            .args([
+                "tunnel",
+                "--no-autoupdate",
+                "--http-host-header",
+                host_header,
+                "--url",
+                target,
+            ])
             // cloudflared logs (incl. the assigned URL) go to stderr; we don't
             // read stdout, so discard it rather than fill an undrained pipe.
             .stdout(Stdio::null())
