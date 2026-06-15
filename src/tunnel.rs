@@ -75,10 +75,17 @@ impl Tunnel for CloudflareBackend {
         .map_err(|_| BeamsError::UrlTimeout)?;
 
         match found {
-            Some(url) => Ok(TunnelHandle {
-                public_url: url,
-                child,
-            }),
+            Some(url) => {
+                // Keep draining stderr for the tunnel's lifetime. If we stop
+                // reading, the pipe's read end closes and cloudflared dies with
+                // SIGPIPE on its next log write — killing the tunnel right after
+                // it comes up. This task ends on EOF when cloudflared exits.
+                tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+                Ok(TunnelHandle {
+                    public_url: url,
+                    child,
+                })
+            }
             None => Err(BeamsError::TunnelStart(
                 "cloudflared exited without providing a public URL".to_string(),
             )),
