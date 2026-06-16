@@ -25,6 +25,26 @@ struct Args {
     tcp: bool,
 }
 
+/// Resolve when the process is asked to terminate: Ctrl+C (SIGINT), SIGTERM, or
+/// SIGHUP (closing the terminal). Catching these lets us kill the child tunnel
+/// process instead of orphaning it — `kill_on_drop` does not run on a signal.
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+    let mut hup = signal(SignalKind::hangup()).expect("install SIGHUP handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
+        _ = hup.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -82,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
+        _ = shutdown_signal() => {
             println!("\n  Stopping...");
             handle.shutdown().await;
         }
