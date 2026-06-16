@@ -59,6 +59,17 @@ async fn main() -> anyhow::Result<()> {
         (backend.start().await?, None)
     };
 
+    // Wait until the tunnel is actually reachable before showing the address,
+    // so it works the moment the user opens it (quick tunnels need a few seconds
+    // for DNS/edge propagation).
+    println!("  {} Waiting for the tunnel to come online...", "…".cyan());
+    if !beams::ready::wait_until_ready(handle.public_url(), tcp_port.is_some()).await {
+        println!(
+            "  {} still propagating — it may take a few more seconds to open",
+            "!".yellow()
+        );
+    }
+
     match tcp_port {
         Some(port) => output::print_tcp_banner(handle.public_url(), port),
         None => {
