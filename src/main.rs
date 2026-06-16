@@ -61,7 +61,13 @@ async fn main() -> anyhow::Result<()> {
 
     match tcp_port {
         Some(port) => output::print_tcp_banner(handle.public_url(), port),
-        None => output::print_banner(handle.public_url(), &args.target)?,
+        None => {
+            // Show a tidy "localhost:PORT" forwarding line for HTTP tunnels.
+            let forward = cli::parse_host_port(&args.target)
+                .map(|(h, p)| format!("{h}:{p}"))
+                .unwrap_or_else(|_| args.target.clone());
+            output::print_banner(handle.public_url(), &forward)?;
+        }
     }
 
     tokio::select! {

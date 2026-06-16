@@ -19,19 +19,20 @@ pub struct BoreBackend {
 impl Tunnel for BoreBackend {
     async fn start(&self) -> Result<TunnelHandle> {
         let port = self.local_port.to_string();
+        // bore logs (incl. the assigned address) go to stdout, unlike cloudflared.
         let mut child = Command::new(&self.binary)
             .args(["local", &port, "--to", "bore.pub"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| BeamsError::TunnelStart(e.to_string()))?;
 
-        let stderr = child
-            .stderr
+        let stdout = child
+            .stdout
             .take()
             .ok_or_else(|| BeamsError::TunnelStart("could not read bore output".to_string()))?;
-        let mut lines = BufReader::new(stderr).lines();
+        let mut lines = BufReader::new(stdout).lines();
 
         let found = tokio::time::timeout(Duration::from_secs(30), async {
             while let Ok(Some(line)) = lines.next_line().await {
