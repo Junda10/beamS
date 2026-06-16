@@ -1,16 +1,11 @@
-// Full path: starts a local HTTP server, downloads cloudflared, opens a tunnel,
-// and asserts the public URL serves the local content. Requires network +
-// outbound access, so it is #[ignore]d by default. Run with:
-//   cargo test --test e2e -- --ignored --nocapture
+// Network-gated end-to-end tests (require outbound access), #[ignore]d by default.
+// Run with: cargo test --test e2e -- --ignored --nocapture
 use std::time::Duration;
 
-use beams::binary;
-use beams::tunnel::{CloudflareBackend, Tunnel};
+use beams::binary::{ensure_binary, Tool};
+use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel};
 
-#[tokio::test]
-#[ignore]
-async fn tunnel_serves_local_http() {
-    // Start a tiny local server on an ephemeral port.
+async fn spawn_hello_server() -> u16 {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -23,18 +18,25 @@ async fn tunnel_serves_local_http() {
             }
         }
     });
+    port
+}
 
-    let bin = binary::ensure_binary().await.expect("download cloudflared");
-    let backend = CloudflareBackend { binary: bin };
-    let mut handle = backend
-        .start(&format!("http://localhost:{port}"))
+#[tokio::test]
+#[ignore]
+async fn cloudflare_serves_local_http() {
+    let port = spawn_hello_server().await;
+    let bin = ensure_binary(Tool::Cloudflared)
         .await
-        .expect("start tunnel");
+        .expect("download cloudflared");
+    let backend = CloudflareBackend {
+        binary: bin,
+        target: format!("http://localhost:{port}"),
+    };
+    let mut handle = backend.start().await.expect("start tunnel");
 
     let url = handle.public_url().to_string();
     assert!(url.ends_with(".trycloudflare.com"), "got: {url}");
 
-    // Quick tunnels take a few seconds to become reachable; retry briefly.
     let client = reqwest::Client::new();
     let mut last = String::new();
     for _ in 0..10 {
@@ -48,9 +50,42 @@ async fn tunnel_serves_local_http() {
             }
         }
     }
-    let _ = handle.shutdown().await;
+    handle.shutdown().await;
+    assert!(last.contains("hello"), "tunnel did not serve: {last:?}");
+}
+
+#[tokio::test]
+#[ignore]
+async fn bore_tcp_tunnel_opens() {
+    let port = spawn_hello_server().await;
+    let bin = ensure_binary(Tool::Bore).await.expect("download bore");
+    let backend = BoreBackend {
+        binary: bin,
+        local_port: port,
+    };
+    let mut handle = backend.start().await.expect("start bore");
     assert!(
-        last.contains("hello"),
-        "tunnel did not serve local content: {last:?}"
+        handle.public_url().starts_with("bore.pub:"),
+        "got {}",
+        handle.public_url()
     );
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn localtunnel_subdomain_opens() {
+    let port = spawn_hello_server().await;
+    let backend = LocaltunnelBackend {
+        subdomain: format!("beams-test-{port}"),
+        local_host: "localhost".to_string(),
+        local_port: port,
+    };
+    let mut handle = backend.start().await.expect("open localtunnel");
+    assert!(
+        handle.public_url().contains("loca.lt"),
+        "got {}",
+        handle.public_url()
+    );
+    handle.shutdown().await;
 }

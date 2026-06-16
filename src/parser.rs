@@ -14,9 +14,48 @@ pub fn extract_public_url(line: &str) -> Option<String> {
     }
 }
 
+/// Pull the public bore address (`bore.pub:<port>`) out of a bore log line.
+/// Handles both the "listening at bore.pub:PORT" line and a "remote_port=PORT"
+/// field, returning a normalized `bore.pub:<port>` string.
+pub fn extract_bore_address(line: &str) -> Option<String> {
+    for marker in ["bore.pub:", "remote_port="] {
+        if let Some(idx) = line.find(marker) {
+            let rest = &line[idx + marker.len()..];
+            let port: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !port.is_empty() {
+                return Some(format!("bore.pub:{port}"));
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_bore_address() {
+        let line = "2024-01-01 INFO bore_cli::client: listening at bore.pub:41234";
+        assert_eq!(
+            extract_bore_address(line).as_deref(),
+            Some("bore.pub:41234")
+        );
+    }
+
+    #[test]
+    fn extracts_bore_remote_port_field() {
+        let line = "INFO connected to server remote_port=41234";
+        assert_eq!(
+            extract_bore_address(line).as_deref(),
+            Some("bore.pub:41234")
+        );
+    }
+
+    #[test]
+    fn bore_ignores_unrelated() {
+        assert_eq!(extract_bore_address("INFO starting client"), None);
+    }
 
     #[test]
     fn extracts_url_from_boxed_log_line() {

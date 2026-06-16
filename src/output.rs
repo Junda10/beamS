@@ -23,6 +23,19 @@ pub fn print_banner(public_url: &str, target: &str) -> Result<()> {
     Ok(())
 }
 
+/// Print the banner for a raw TCP tunnel (no QR code; show the host:port).
+pub fn print_tcp_banner(public_addr: &str, local_port: u16) {
+    use owo_colors::OwoColorize;
+    println!("  {} Your TCP service is live!\n", "✓".green());
+    println!("  🔌 Public address:  {}", public_addr.bold().cyan());
+    println!("  📍 Forwarding:      localhost:{local_port}\n");
+    println!(
+        "  Connect e.g.  nc {}  ·  press {} to stop",
+        public_addr.replace(':', " "),
+        "Ctrl+C".yellow()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

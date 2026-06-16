@@ -1,10 +1,10 @@
 use clap::Parser;
 use owo_colors::OwoColorize;
 
-use beams::binary;
+use beams::binary::{self, Tool};
 use beams::cli;
 use beams::output;
-use beams::tunnel::{CloudflareBackend, Tunnel};
+use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel, TunnelHandle};
 
 #[derive(Parser)]
 #[command(
@@ -15,31 +15,62 @@ use beams::tunnel::{CloudflareBackend, Tunnel};
 struct Args {
     /// Port or local address, e.g. 3000 or http://localhost:3000
     target: String,
+
+    /// Request a fixed subdomain over localtunnel, e.g. --subdomain myapp -> https://myapp.loca.lt
+    #[arg(long, conflicts_with = "tcp")]
+    subdomain: Option<String>,
+
+    /// Expose a raw TCP port (SSH, databases, …) over bore.pub
+    #[arg(long)]
+    tcp: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let target = cli::parse_target(&args.target)?;
 
     println!("  {} Setting up tunnel...", "✓".green());
-    let bin = binary::ensure_binary().await?;
 
-    let backend = CloudflareBackend { binary: bin };
-    let mut handle = backend.start(&target).await?;
+    // Build the backend from flags. `tcp_port` is Some(port) for TCP tunnels
+    // (used for the TCP banner), None for HTTP tunnels.
+    let (mut handle, tcp_port): (TunnelHandle, Option<u16>) = if args.tcp {
+        let (_host, port) = cli::parse_host_port(&args.target)?;
+        let bin = binary::ensure_binary(Tool::Bore).await?;
+        let backend = BoreBackend {
+            binary: bin,
+            local_port: port,
+        };
+        (backend.start().await?, Some(port))
+    } else if let Some(subdomain) = args.subdomain.clone() {
+        let (host, port) = cli::parse_host_port(&args.target)?;
+        let backend = LocaltunnelBackend {
+            subdomain,
+            local_host: host,
+            local_port: port,
+        };
+        (backend.start().await?, None)
+    } else {
+        let target = cli::parse_target(&args.target)?;
+        let bin = binary::ensure_binary(Tool::Cloudflared).await?;
+        let backend = CloudflareBackend {
+            binary: bin,
+            target,
+        };
+        (backend.start().await?, None)
+    };
 
-    output::print_banner(handle.public_url(), &target)?;
+    match tcp_port {
+        Some(port) => output::print_tcp_banner(handle.public_url(), port),
+        None => output::print_banner(handle.public_url(), &args.target)?,
+    }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("\n  Stopping...");
-            let _ = handle.shutdown().await;
+            handle.shutdown().await;
         }
-        result = handle.wait() => {
-            match result {
-                Ok(status) => eprintln!("  cloudflared exited ({status})"),
-                Err(e) => eprintln!("  error while monitoring cloudflared: {e}"),
-            }
+        _ = handle.wait() => {
+            eprintln!("  tunnel closed");
         }
     }
     Ok(())

@@ -2,54 +2,104 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{BeamsError, Result};
 
-/// Map (OS, arch) — as given by `std::env::consts::{OS, ARCH}` — to the
-/// cloudflared release asset filename.
-pub fn cloudflared_asset(os: &str, arch: &str) -> Result<&'static str> {
-    Ok(match (os, arch) {
-        ("macos", "x86_64") => "cloudflared-darwin-amd64.tgz",
-        ("macos", "aarch64") => "cloudflared-darwin-arm64.tgz",
-        ("linux", "x86_64") => "cloudflared-linux-amd64",
-        ("linux", "aarch64") => "cloudflared-linux-arm64",
-        ("windows", "x86_64") => "cloudflared-windows-amd64.exe",
-        _ => {
-            return Err(BeamsError::Download(format!(
-                "unsupported platform: {os}/{arch}"
-            )))
+/// An external CLI that beams downloads and caches on demand.
+#[derive(Clone, Copy)]
+pub enum Tool {
+    Cloudflared,
+    Bore,
+}
+
+const BORE_VERSION: &str = "v0.6.0";
+
+impl Tool {
+    /// File name of the cached executable for this tool.
+    pub fn bin_name(self) -> &'static str {
+        match self {
+            Tool::Cloudflared if cfg!(windows) => "cloudflared.exe",
+            Tool::Cloudflared => "cloudflared",
+            Tool::Bore if cfg!(windows) => "bore.exe",
+            Tool::Bore => "bore",
         }
-    })
+    }
+
+    /// Name of the entry inside the downloaded archive (without any `.exe`).
+    fn archive_entry(self) -> &'static str {
+        match self {
+            Tool::Cloudflared => "cloudflared",
+            Tool::Bore => "bore",
+        }
+    }
+
+    /// Release asset filename for (os, arch) from `std::env::consts::{OS, ARCH}`.
+    pub fn asset(self, os: &str, arch: &str) -> Result<String> {
+        let name = match self {
+            Tool::Cloudflared => match (os, arch) {
+                ("macos", "x86_64") => "cloudflared-darwin-amd64.tgz",
+                ("macos", "aarch64") => "cloudflared-darwin-arm64.tgz",
+                ("linux", "x86_64") => "cloudflared-linux-amd64",
+                ("linux", "aarch64") => "cloudflared-linux-arm64",
+                ("windows", "x86_64") => "cloudflared-windows-amd64.exe",
+                _ => {
+                    return Err(BeamsError::Download(format!(
+                        "unsupported platform: {os}/{arch}"
+                    )))
+                }
+            }
+            .to_string(),
+            Tool::Bore => {
+                let triple = match (os, arch) {
+                    ("macos", "x86_64") => "x86_64-apple-darwin.tar.gz",
+                    ("macos", "aarch64") => "aarch64-apple-darwin.tar.gz",
+                    ("linux", "x86_64") => "x86_64-unknown-linux-musl.tar.gz",
+                    ("linux", "aarch64") => "aarch64-unknown-linux-musl.tar.gz",
+                    ("windows", "x86_64") => "x86_64-pc-windows-msvc.zip",
+                    _ => {
+                        return Err(BeamsError::Download(format!(
+                            "unsupported platform: {os}/{arch}"
+                        )))
+                    }
+                };
+                format!("bore-{BORE_VERSION}-{triple}")
+            }
+        };
+        Ok(name)
+    }
+
+    /// Download URL for a release asset of this tool.
+    pub fn download_url(self, asset: &str) -> String {
+        match self {
+            Tool::Cloudflared => {
+                format!(
+                    "https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}"
+                )
+            }
+            Tool::Bore => {
+                format!("https://github.com/ekzhang/bore/releases/download/{BORE_VERSION}/{asset}")
+            }
+        }
+    }
 }
 
-/// Build the download URL for a given asset from cloudflared's latest release.
-pub fn download_url(asset: &str) -> String {
-    format!("https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}")
-}
-
-/// Directory where beams caches the downloaded cloudflared binary.
+/// Directory where beams caches downloaded binaries.
 pub fn cache_dir() -> Result<PathBuf> {
     let dirs = directories::ProjectDirs::from("dev", "beams", "beams")
         .ok_or_else(|| BeamsError::Download("could not locate a cache directory".to_string()))?;
     Ok(dirs.cache_dir().to_path_buf())
 }
 
-/// Full path to the cached cloudflared binary.
-pub fn binary_path() -> Result<PathBuf> {
-    let name = if cfg!(windows) {
-        "cloudflared.exe"
-    } else {
-        "cloudflared"
-    };
-    Ok(cache_dir()?.join(name))
+/// Full path to the cached executable for `tool`.
+pub fn binary_path(tool: Tool) -> Result<PathBuf> {
+    Ok(cache_dir()?.join(tool.bin_name()))
 }
 
-/// Ensure cloudflared exists in the cache, downloading it on first use.
-/// Returns the path to the executable.
-pub async fn ensure_binary() -> Result<PathBuf> {
-    let path = binary_path()?;
+/// Ensure `tool`'s binary exists in the cache, downloading it on first use.
+pub async fn ensure_binary(tool: Tool) -> Result<PathBuf> {
+    let path = binary_path(tool)?;
     if path.exists() {
         return Ok(path);
     }
-    let asset = cloudflared_asset(std::env::consts::OS, std::env::consts::ARCH)?;
-    let url = download_url(asset);
+    let asset = tool.asset(std::env::consts::OS, std::env::consts::ARCH)?;
+    let url = tool.download_url(&asset);
     std::fs::create_dir_all(cache_dir()?)?;
 
     let bytes = reqwest::get(&url)
@@ -64,8 +114,10 @@ pub async fn ensure_binary() -> Result<PathBuf> {
     // Write to a temp path and atomically rename into place, so an interrupted
     // download can never leave a corrupt binary that a later run treats as valid.
     let tmp = path.with_extension("tmp");
-    if asset.ends_with(".tgz") {
-        extract_cloudflared_from_tgz(&bytes, &tmp)?;
+    if asset.ends_with(".zip") {
+        extract_from_zip(&bytes, tool.archive_entry(), &tmp)?;
+    } else if asset.ends_with(".tgz") || asset.ends_with(".tar.gz") {
+        extract_from_tgz(&bytes, tool.archive_entry(), &tmp)?;
     } else {
         std::fs::write(&tmp, &bytes)?;
     }
@@ -80,28 +132,56 @@ pub async fn ensure_binary() -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Extract the `cloudflared` entry from a `.tgz` archive into `dest`.
-fn extract_cloudflared_from_tgz(bytes: &[u8], dest: &Path) -> Result<()> {
+/// Extract the entry named `entry` (or `entry.exe`) from a gzip tarball.
+fn extract_from_tgz(bytes: &[u8], entry: &str, dest: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
     use tar::Archive;
     let mut archive = Archive::new(GzDecoder::new(bytes));
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let is_cloudflared = entry
-            .path()?
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n == "cloudflared")
-            .unwrap_or(false);
-        if is_cloudflared {
+    for e in archive.entries()? {
+        let mut e = e?;
+        if entry_matches(e.path()?.file_name(), entry) {
             let mut out = std::fs::File::create(dest)?;
-            std::io::copy(&mut entry, &mut out)?;
+            std::io::copy(&mut e, &mut out)?;
             return Ok(());
         }
     }
-    Err(BeamsError::Download(
-        "cloudflared not found in the downloaded archive".to_string(),
-    ))
+    Err(BeamsError::Download(format!(
+        "{entry} not found in the downloaded archive"
+    )))
+}
+
+/// Extract the entry named `entry` (or `entry.exe`) from a zip archive.
+fn extract_from_zip(bytes: &[u8], entry: &str, dest: &Path) -> Result<()> {
+    use std::io::Cursor;
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|e| BeamsError::Download(e.to_string()))?;
+    for i in 0..zip.len() {
+        let mut file = zip
+            .by_index(i)
+            .map_err(|e| BeamsError::Download(e.to_string()))?;
+        let matches = file
+            .enclosed_name()
+            .as_deref()
+            .and_then(|p| p.file_name())
+            .map(|f| entry_matches(Some(f), entry))
+            .unwrap_or(false);
+        if matches {
+            let mut out = std::fs::File::create(dest)?;
+            std::io::copy(&mut file, &mut out)?;
+            return Ok(());
+        }
+    }
+    Err(BeamsError::Download(format!(
+        "{entry} not found in the downloaded zip"
+    )))
+}
+
+/// True if `file_name` is `entry` or `entry.exe`.
+fn entry_matches(file_name: Option<&std::ffi::OsStr>, entry: &str) -> bool {
+    match file_name.and_then(|n| n.to_str()) {
+        Some(n) => n == entry || n == format!("{entry}.exe"),
+        None => false,
+    }
 }
 
 #[cfg(test)]
@@ -109,57 +189,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn macos_arm_asset() {
+    fn cloudflared_asset_via_tool() {
         assert_eq!(
-            cloudflared_asset("macos", "aarch64").unwrap(),
+            Tool::Cloudflared.asset("macos", "aarch64").unwrap(),
             "cloudflared-darwin-arm64.tgz"
         );
-    }
-
-    #[test]
-    fn macos_intel_asset() {
         assert_eq!(
-            cloudflared_asset("macos", "x86_64").unwrap(),
-            "cloudflared-darwin-amd64.tgz"
-        );
-    }
-
-    #[test]
-    fn linux_amd64_asset() {
-        assert_eq!(
-            cloudflared_asset("linux", "x86_64").unwrap(),
+            Tool::Cloudflared.asset("linux", "x86_64").unwrap(),
             "cloudflared-linux-amd64"
         );
     }
 
     #[test]
-    fn windows_asset() {
+    fn bore_asset_macos_arm() {
         assert_eq!(
-            cloudflared_asset("windows", "x86_64").unwrap(),
-            "cloudflared-windows-amd64.exe"
+            Tool::Bore.asset("macos", "aarch64").unwrap(),
+            "bore-v0.6.0-aarch64-apple-darwin.tar.gz"
+        );
+    }
+
+    #[test]
+    fn bore_asset_linux_x64_is_musl() {
+        assert_eq!(
+            Tool::Bore.asset("linux", "x86_64").unwrap(),
+            "bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz"
+        );
+    }
+
+    #[test]
+    fn bore_asset_windows_is_zip() {
+        assert_eq!(
+            Tool::Bore.asset("windows", "x86_64").unwrap(),
+            "bore-v0.6.0-x86_64-pc-windows-msvc.zip"
         );
     }
 
     #[test]
     fn unsupported_platform_errors() {
         assert!(matches!(
-            cloudflared_asset("plan9", "sparc"),
+            Tool::Bore.asset("plan9", "sparc"),
             Err(BeamsError::Download(_))
         ));
     }
 
     #[test]
-    fn download_url_points_at_latest_release() {
+    fn bore_download_url_is_pinned() {
         assert_eq!(
-            download_url("cloudflared-linux-amd64"),
+            Tool::Bore.download_url("bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz"),
+            "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-unknown-linux-musl.tar.gz"
+        );
+    }
+
+    #[test]
+    fn cloudflared_download_url_is_latest() {
+        assert_eq!(
+            Tool::Cloudflared.download_url("cloudflared-linux-amd64"),
             "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
         );
     }
 
     #[test]
-    fn binary_path_lives_under_cache_dir_and_is_named_cloudflared() {
+    fn binary_path_lives_under_cache_dir() {
         let dir = cache_dir().unwrap();
-        let path = binary_path().unwrap();
+        let path = binary_path(Tool::Cloudflared).unwrap();
         assert!(path.starts_with(&dir));
         let name = path.file_name().unwrap().to_str().unwrap();
         assert!(name == "cloudflared" || name == "cloudflared.exe");
