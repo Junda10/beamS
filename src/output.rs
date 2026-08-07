@@ -10,10 +10,14 @@ pub fn render_qr(url: &str) -> Result<String> {
 }
 
 /// Print the success banner with the public URL, forwarding target, and QR code.
-pub fn print_banner(public_url: &str, target: &str) -> Result<()> {
+pub fn print_banner(public_url: &str, target: &str, copied: bool) -> Result<()> {
     use owo_colors::OwoColorize;
     println!("  {} Your local service is live!\n", "✓".green());
-    println!("  🌐 Public URL:  {}", public_url.bold().cyan());
+    println!(
+        "  🌐 Public URL:  {}{}",
+        public_url.bold().cyan(),
+        if copied { "  (copied)" } else { "" }
+    );
     println!("  📍 Forwarding:  {}\n", target);
     println!("{}", render_qr(public_url)?);
     println!(
@@ -24,10 +28,14 @@ pub fn print_banner(public_url: &str, target: &str) -> Result<()> {
 }
 
 /// Print the banner for a raw TCP tunnel (no QR code; show the host:port).
-pub fn print_tcp_banner(public_addr: &str, local_port: u16) {
+pub fn print_tcp_banner(public_addr: &str, local_port: u16, copied: bool) {
     use owo_colors::OwoColorize;
     println!("  {} Your TCP service is live!\n", "✓".green());
-    println!("  🔌 Public address:  {}", public_addr.bold().cyan());
+    println!(
+        "  🔌 Public address:  {}{}",
+        public_addr.bold().cyan(),
+        if copied { "  (copied)" } else { "" }
+    );
     println!("  📍 Forwarding:      localhost:{local_port}\n");
     println!(
         "  Connect e.g.  nc {}  ·  press {} to stop",

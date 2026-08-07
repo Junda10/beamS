@@ -1,10 +1,13 @@
+use std::time::Duration;
+
 use clap::Parser;
 use owo_colors::OwoColorize;
 
 use beams::binary::{self, Tool};
 use beams::cli;
+use beams::local;
 use beams::output;
-use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel, TunnelHandle};
+use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel};
 
 #[derive(Parser)]
 #[command(
@@ -13,8 +16,9 @@ use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel, 
     about = "Share your localhost with the world — free, friendly, for everyone"
 )]
 struct Args {
-    /// Port or local address, e.g. 3000 or http://localhost:3000
-    target: String,
+    /// Port or local address, e.g. 3000 or http://localhost:3000.
+    /// Omit it and beams looks for a dev server on the usual ports.
+    target: Option<String>,
 
     /// Request a fixed subdomain over localtunnel, e.g. --subdomain myapp -> https://myapp.loca.lt
     #[arg(long, conflicts_with = "tcp")]
@@ -23,6 +27,10 @@ struct Args {
     /// Expose a raw TCP port (SSH, databases, …) over bore.pub
     #[arg(long)]
     tcp: bool,
+
+    /// Open the public URL in your browser once the tunnel is up
+    #[arg(long)]
+    open: bool,
 }
 
 /// Resolve when the process is asked to terminate: Ctrl+C (SIGINT), SIGTERM, or
@@ -49,66 +57,109 @@ async fn shutdown_signal() {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    println!("  {} Setting up tunnel...", "✓".green());
-
-    // Build the backend from flags. `tcp_port` is Some(port) for TCP tunnels
-    // (used for the TCP banner), None for HTTP tunnels.
-    let (mut handle, tcp_port): (TunnelHandle, Option<u16>) = if args.tcp {
-        let (_host, port) = cli::parse_host_port(&args.target)?;
-        let bin = binary::ensure_binary(Tool::Bore).await?;
-        let backend = BoreBackend {
-            binary: bin,
-            local_port: port,
-        };
-        (backend.start().await?, Some(port))
-    } else if let Some(subdomain) = args.subdomain.clone() {
-        let (host, port) = cli::parse_host_port(&args.target)?;
-        let backend = LocaltunnelBackend {
-            subdomain,
-            local_host: host,
-            local_port: port,
-        };
-        (backend.start().await?, None)
-    } else {
-        let target = cli::parse_target(&args.target)?;
-        let bin = binary::ensure_binary(Tool::Cloudflared).await?;
-        let backend = CloudflareBackend {
-            binary: bin,
-            target,
-        };
-        (backend.start().await?, None)
+    // No target given? Use whichever common dev port is actually serving.
+    let target = match args.target.clone() {
+        Some(t) => t,
+        None => match local::detect_port().await {
+            Some(port) => {
+                println!("  {} Found a local server on port {port}", "✓".green());
+                port.to_string()
+            }
+            None => anyhow::bail!(
+                "no local server found on the usual ports ({}) — pass one explicitly, e.g. `beams 3000`",
+                local::COMMON_PORTS
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        },
     };
 
-    // Wait until the tunnel is actually reachable before showing the address,
-    // so it works the moment the user opens it (quick tunnels need a few seconds
-    // for DNS/edge propagation).
-    println!("  {} Waiting for the tunnel to come online...", "…".cyan());
-    if !beams::ready::wait_until_ready(handle.public_url(), tcp_port.is_some()).await {
-        println!(
-            "  {} still propagating — it may take a few more seconds to open",
-            "!".yellow()
-        );
+    // Check the local side first: a tunnel to nothing just moves the failure to
+    // whoever opens the link.
+    let (host, port) = cli::parse_host_port(&target)?;
+    if !local::is_listening(&host, port).await {
+        anyhow::bail!("nothing is listening on {host}:{port} — start your server, then run beams again");
     }
 
-    match tcp_port {
-        Some(port) => output::print_tcp_banner(handle.public_url(), port),
-        None => {
-            // Show a tidy "localhost:PORT" forwarding line for HTTP tunnels.
-            let forward = cli::parse_host_port(&args.target)
-                .map(|(h, p)| format!("{h}:{p}"))
-                .unwrap_or_else(|_| args.target.clone());
-            output::print_banner(handle.public_url(), &forward)?;
-        }
-    }
+    println!("  {} Setting up tunnel...", "✓".green());
 
-    tokio::select! {
-        _ = shutdown_signal() => {
-            println!("\n  Stopping...");
-            handle.shutdown().await;
+    let backend: Box<dyn Tunnel + Send + Sync> = if args.tcp {
+        let bin = binary::ensure_binary(Tool::Bore).await?;
+        Box::new(BoreBackend {
+            binary: bin,
+            local_port: port,
+        })
+    } else if let Some(subdomain) = args.subdomain.clone() {
+        Box::new(LocaltunnelBackend {
+            subdomain,
+            local_host: host.clone(),
+            local_port: port,
+        })
+    } else {
+        let bin = binary::ensure_binary(Tool::Cloudflared).await?;
+        Box::new(CloudflareBackend {
+            binary: bin,
+            target: cli::parse_target(&target)?,
+        })
+    };
+
+    let forward = format!("{host}:{port}");
+    let mut first_run = true;
+    let mut failures = 0;
+
+    loop {
+        let mut handle = match backend.start().await {
+            Ok(handle) => {
+                failures = 0;
+                handle
+            }
+            Err(e) => {
+                failures += 1;
+                if failures >= 5 {
+                    return Err(e.into());
+                }
+                eprintln!("  {} {e} — retrying in 2s ({failures}/5)", "!".yellow());
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
+        };
+
+        // Wait until the tunnel is actually reachable before showing the address,
+        // so it works the moment the user opens it (quick tunnels need a few seconds
+        // for DNS/edge propagation).
+        println!("  {} Waiting for the tunnel to come online...", "…".cyan());
+        if !beams::ready::wait_until_ready(handle.public_url(), args.tcp).await {
+            println!(
+                "  {} still propagating — it may take a few more seconds to open",
+                "!".yellow()
+            );
         }
-        _ = handle.wait() => {
-            eprintln!("  tunnel closed");
+
+        let copied = local::copy_to_clipboard(handle.public_url()).await;
+        if args.tcp {
+            output::print_tcp_banner(handle.public_url(), port, copied);
+        } else {
+            output::print_banner(handle.public_url(), &forward, copied)?;
+            if args.open && first_run {
+                local::open_in_browser(handle.public_url());
+            }
+        }
+        first_run = false;
+
+        tokio::select! {
+            _ = shutdown_signal() => {
+                println!("\n  Stopping...");
+                handle.shutdown().await;
+                return Ok(());
+            }
+            // The relay dropped us (quick tunnels do this on long runs) — dial
+            // again instead of making the user re-run the command. The public
+            // URL changes, so the banner is reprinted.
+            _ = handle.wait() => {
+                println!("\n  {} Tunnel dropped — reconnecting...", "…".yellow());
+            }
         }
     }
-    Ok(())
 }

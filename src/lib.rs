@@ -1,6 +1,7 @@
 pub mod binary;
 pub mod cli;
 pub mod error;
+pub mod local;
 pub mod output;
 pub mod parser;
 pub mod ready;
