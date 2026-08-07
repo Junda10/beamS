@@ -80,7 +80,9 @@ async fn main() -> anyhow::Result<()> {
     // whoever opens the link.
     let (host, port) = cli::parse_host_port(&target)?;
     if !local::is_listening(&host, port).await {
-        anyhow::bail!("nothing is listening on {host}:{port} — start your server, then run beams again");
+        anyhow::bail!(
+            "nothing is listening on {host}:{port} — start your server, then run beams again"
+        );
     }
 
     println!("  {} Setting up tunnel...", "✓".green());
