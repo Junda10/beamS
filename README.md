@@ -2,18 +2,19 @@
 
 > Beam your localhost to the world — free, friendly, for everyone.
 
-`beams` shares a local HTTP service to a public `https://*.trycloudflare.com`
-URL with one command. Free forever, no signup. It auto-downloads `cloudflared`
-on first run and prints a QR code so you can open the URL on your phone.
+Run `beams` in your project and your dev server is on the internet: it finds the
+port, opens a public `https://*.trycloudflare.com` URL, copies it to your
+clipboard and prints a QR code so you can open it on your phone. Free forever,
+no signup — it auto-downloads what it needs on first run.
 
 ## Install
 
 ```bash
 # Run instantly, no install (npm package is published as "beams-cli")
-npx beams-cli 3000
+npx beams-cli
 
 # Or install globally — the command is `beams`
-npm i -g beams-cli      # then:  beams 3000
+npm i -g beams-cli      # then:  beams
 
 # Or build from source
 cargo install --path .
