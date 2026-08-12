@@ -10,9 +10,18 @@ pub fn render_qr(url: &str) -> Result<String> {
 }
 
 /// Print the success banner with the public URL, forwarding target, and QR code.
-pub fn print_banner(public_url: &str, target: &str, copied: bool) -> Result<()> {
+/// `ready` is false when the tunnel never became reachable from this machine —
+/// say so instead of claiming it is live.
+pub fn print_banner(public_url: &str, target: &str, copied: bool, ready: bool) -> Result<()> {
     use owo_colors::OwoColorize;
-    println!("  {} Your local service is live!\n", "✓".green());
+    if ready {
+        println!("  {} Your local service is live!\n", "✓".green());
+    } else {
+        println!(
+            "  {} Tunnel is up, but not reachable from this machine yet\n",
+            "!".yellow()
+        );
+    }
     println!(
         "  🌐 Public URL:  {}{}",
         public_url.bold().cyan(),
@@ -28,9 +37,16 @@ pub fn print_banner(public_url: &str, target: &str, copied: bool) -> Result<()> 
 }
 
 /// Print the banner for a raw TCP tunnel (no QR code; show the host:port).
-pub fn print_tcp_banner(public_addr: &str, local_port: u16, copied: bool) {
+pub fn print_tcp_banner(public_addr: &str, local_port: u16, copied: bool, ready: bool) {
     use owo_colors::OwoColorize;
-    println!("  {} Your TCP service is live!\n", "✓".green());
+    if ready {
+        println!("  {} Your TCP service is live!\n", "✓".green());
+    } else {
+        println!(
+            "  {} Tunnel is up, but not reachable from this machine yet\n",
+            "!".yellow()
+        );
+    }
     println!(
         "  🔌 Public address:  {}{}",
         public_addr.bold().cyan(),

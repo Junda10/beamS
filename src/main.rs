@@ -132,21 +132,31 @@ async fn main() -> anyhow::Result<()> {
         // so it works the moment the user opens it (quick tunnels need a few seconds
         // for DNS/edge propagation).
         println!("  {} Waiting for the tunnel to come online...", "…".cyan());
-        if !beams::ready::wait_until_ready(handle.public_url(), args.tcp).await {
-            println!(
-                "  {} still propagating — it may take a few more seconds to open",
-                "!".yellow()
-            );
-        }
+        let ready = beams::ready::wait_until_ready(handle.public_url(), args.tcp).await;
 
         let copied = local::copy_to_clipboard(handle.public_url()).await;
         if args.tcp {
-            output::print_tcp_banner(handle.public_url(), port, copied);
+            output::print_tcp_banner(handle.public_url(), port, copied, ready);
         } else {
-            output::print_banner(handle.public_url(), &forward, copied)?;
+            output::print_banner(handle.public_url(), &forward, copied, ready)?;
             if args.open && first_run {
                 local::open_in_browser(handle.public_url());
             }
+        }
+        if !ready {
+            // Almost always a stale negative DNS entry: something looked the
+            // hostname up before it was registered, and quick-tunnel zones cache
+            // NXDOMAIN for 30 minutes.
+            println!(
+                "\n  {} If it won't open, flush this machine's DNS cache:\n      {}",
+                "!".yellow(),
+                if cfg!(target_os = "macos") {
+                    "sudo killall -HUP mDNSResponder"
+                } else {
+                    "sudo resolvectl flush-caches"
+                }
+                .bold()
+            );
         }
         first_run = false;
 
