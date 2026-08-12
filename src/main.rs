@@ -57,6 +57,13 @@ async fn shutdown_signal() {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    // Say which build this is — first thing anyone needs when a tunnel misbehaves.
+    println!(
+        "  {} {}",
+        "beams".bold(),
+        concat!("v", env!("CARGO_PKG_VERSION")).dimmed()
+    );
+
     // No target given? Use whichever common dev port is actually serving.
     let target = match args.target.clone() {
         Some(t) => t,
