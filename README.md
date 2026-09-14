@@ -33,6 +33,7 @@ beams http://localhost:8080      # explicit URL
 beams 3000 --open                # also open the public URL in your browser
 beams 3000 --subdomain myapp     # fixed subdomain -> https://myapp.loca.lt (localtunnel)
 beams 22 --tcp                   # raw TCP (SSH, databases, …) -> bore.pub:PORT (bore)
+beams 3000 --protocol http2      # pin the Cloudflare transport if your network blocks UDP
 ```
 
 Press `Ctrl+C` to stop. Notes:
@@ -42,11 +43,15 @@ Press `Ctrl+C` to stop. Notes:
 - It checks your local port before opening the tunnel, so a link that would 502
   fails immediately instead of on your visitor's screen.
 - The public URL is copied to your clipboard automatically.
-- If the relay drops the tunnel, beams reconnects and prints the new URL.
+- If the relay drops the tunnel — or quietly stops routing to it — beams notices,
+  reconnects and prints the new URL.
 - The default Cloudflare URL is random and changes each run; quick tunnels take a
   few seconds to become reachable.
 - `--subdomain` names are first-come on the shared loca.lt server.
 - `--tcp` gives you a random `bore.pub` port for any TCP service.
+- `--protocol quic|http2|auto` pins how cloudflared reaches the edge. It defaults
+  to QUIC over UDP/7844; on networks that throttle or block UDP (campus,
+  corporate, some ISPs) `--protocol http2` connects faster and stays steadier.
 - Dev servers (Vite, etc.) work out of the box — beams rewrites the `Host` header
   to your local `localhost:PORT`.
 

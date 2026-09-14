@@ -14,6 +14,9 @@ pub trait Tunnel {
     async fn start(&self) -> Result<TunnelHandle>;
 }
 
+// One of these exists per process, so the size difference between the variants
+// costs nothing; boxing the `Child` would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 enum HandleInner {
     /// External process backends (cloudflared, bore).
     Child(tokio::process::Child),
