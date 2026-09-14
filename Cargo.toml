@@ -1,6 +1,6 @@
 [package]
 name = "beams"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Share your localhost to the world — free, friendly, for everyone."
 license = "MIT"
