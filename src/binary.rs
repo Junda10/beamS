@@ -10,6 +10,11 @@ pub enum Tool {
 }
 
 const BORE_VERSION: &str = "v0.6.0";
+/// Pinned so a bad upstream release, or a rename of the assets above, cannot
+/// break every user's first run. Bump it deliberately: the Cloudflare edge
+/// eventually refuses very old clients, so this is maintenance, not set-and-forget.
+/// cloudflared tags carry no `v` prefix.
+const CLOUDFLARED_VERSION: &str = "2026.9.1";
 
 impl Tool {
     /// File name of the cached executable for this tool.
@@ -69,9 +74,7 @@ impl Tool {
     pub fn download_url(self, asset: &str) -> String {
         match self {
             Tool::Cloudflared => {
-                format!(
-                    "https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}"
-                )
+                format!("https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_VERSION}/{asset}")
             }
             Tool::Bore => {
                 format!("https://github.com/ekzhang/bore/releases/download/{BORE_VERSION}/{asset}")
@@ -240,12 +243,16 @@ mod tests {
         );
     }
 
+    /// `latest` would mean an upstream release could break every first run, so
+    /// the URL must name a version. Guard against sliding back to `latest`.
     #[test]
-    fn cloudflared_download_url_is_latest() {
+    fn cloudflared_download_url_is_pinned() {
+        let url = Tool::Cloudflared.download_url("cloudflared-linux-amd64");
         assert_eq!(
-            Tool::Cloudflared.download_url("cloudflared-linux-amd64"),
-            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+            url,
+            format!("https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_VERSION}/cloudflared-linux-amd64")
         );
+        assert!(!url.contains("/latest/"));
     }
 
     #[test]
