@@ -31,6 +31,11 @@ struct Args {
     /// Open the public URL in your browser once the tunnel is up
     #[arg(long)]
     open: bool,
+
+    /// Pin the cloudflared edge transport. `quic` is fast but needs UDP/7844;
+    /// use `http2` on networks that throttle or block UDP.
+    #[arg(long, value_parser = ["quic", "http2", "auto"])]
+    protocol: Option<String>,
 }
 
 /// Resolve when the process is asked to terminate: Ctrl+C (SIGINT), SIGTERM, or
@@ -111,12 +116,13 @@ async fn main() -> anyhow::Result<()> {
         Box::new(CloudflareBackend {
             binary: bin,
             target: cli::parse_target(&target)?,
+            protocol: args.protocol.clone(),
         })
     };
 
     let forward = format!("{host}:{port}");
     let mut first_run = true;
-    let mut failures = 0;
+    let mut failures: u32 = 0;
 
     loop {
         let mut handle = match backend.start().await {
@@ -129,8 +135,16 @@ async fn main() -> anyhow::Result<()> {
                 if failures >= 5 {
                     return Err(e.into());
                 }
-                eprintln!("  {} {e} — retrying in 2s ({failures}/5)", "!".yellow());
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                // Back off so a relay that is refusing everyone right now gets
+                // room to recover, instead of five dials inside ten seconds.
+                // failures is 1..=4 here, so this is 2s, 4s, 8s, 16s.
+                let wait = Duration::from_secs(1u64 << failures);
+                eprintln!(
+                    "  {} {e} — retrying in {}s ({failures}/5)",
+                    "!".yellow(),
+                    wait.as_secs()
+                );
+                tokio::time::sleep(wait).await;
                 continue;
             }
         };
@@ -167,11 +181,20 @@ async fn main() -> anyhow::Result<()> {
         }
         first_run = false;
 
+        // `handle` is borrowed mutably by the select below, so take the URL now.
+        let public_url = handle.public_url().to_string();
+
         tokio::select! {
             _ = shutdown_signal() => {
                 println!("\n  Stopping...");
                 handle.shutdown().await;
                 return Ok(());
+            }
+            // The process is still alive but the edge stopped routing to it.
+            // Nothing else ends the wait below, so tear it down ourselves.
+            _ = beams::ready::watch_until_dead(&public_url, args.tcp) => {
+                println!("\n  {} Tunnel stopped responding — reconnecting...", "…".yellow());
+                handle.shutdown().await;
             }
             // The relay dropped us (quick tunnels do this on long runs) — dial
             // again instead of making the user re-run the command. The public

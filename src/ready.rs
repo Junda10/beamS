@@ -38,6 +38,44 @@ pub async fn wait_until_ready(public_url: &str, is_tcp: bool) -> bool {
     .await
 }
 
+/// Watch a live tunnel and resolve once it stops answering, so the caller can
+/// restart it instead of waiting for the tunnel process to notice and exit.
+///
+/// A tunnel can stay "up" — the child process alive, no error logged — while the
+/// edge has already stopped routing to it. That half-dead window is what reads as
+/// an unstable connection, so probe the public URL rather than trusting liveness
+/// of the process. One failed probe is normal (a blip, a slow edge); only a run
+/// of `TOLERANCE` failures counts as dead.
+pub async fn watch_until_dead(public_url: &str, is_tcp: bool) {
+    const INTERVAL: Duration = Duration::from_secs(15);
+    const TOLERANCE: u32 = 3;
+
+    let Ok(client) = http_client() else {
+        // No prober, no opinion: never claim the tunnel died.
+        return std::future::pending::<()>().await;
+    };
+
+    let mut failures: u32 = 0;
+    loop {
+        tokio::time::sleep(INTERVAL).await;
+
+        let alive = if is_tcp {
+            tcp_reachable(public_url).await
+        } else {
+            tunnel_alive(&client, public_url).await
+        };
+
+        if alive {
+            failures = 0;
+        } else {
+            failures += 1;
+            if failures >= TOLERANCE {
+                return;
+            }
+        }
+    }
+}
+
 /// Run `check` up to `attempts` times, one second apart, until it succeeds.
 async fn retry<F, Fut>(attempts: u32, mut check: F) -> bool
 where
@@ -95,6 +133,20 @@ async fn http_reachable(client: &reqwest::Client, url: &str) -> bool {
     client.get(url).send().await.is_ok()
 }
 
+/// Alive if the request completed *and* the answer came from our server rather
+/// than from the edge reporting a dead tunnel.
+///
+/// `http_reachable` is deliberately transport-only, which is right for waiting on
+/// a tunnel to come up but wrong for liveness: once cloudflared stops serving a
+/// hostname the Cloudflare edge still answers, with 530 (error 1033). Treating
+/// that as reachable would mean never noticing the tunnel died.
+async fn tunnel_alive(client: &reqwest::Client, url: &str) -> bool {
+    match client.get(url).send().await {
+        Ok(resp) => resp.status().as_u16() != 530,
+        Err(_) => false,
+    }
+}
+
 /// Reachable if a TCP connection to `host:port` succeeds.
 async fn tcp_reachable(addr: &str) -> bool {
     matches!(
@@ -119,6 +171,42 @@ mod tests {
         );
         // bore hands back a bare host:port, with no scheme.
         assert_eq!(hostname_of("bore.pub:41234"), "bore.pub");
+    }
+
+    /// A server that answers every connection with one canned status line.
+    async fn serve_status(status: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                // Drain the request before answering: closing a socket that still
+                // has unread incoming data sends an RST, which on Windows throws
+                // away the response we just wrote.
+                let _ = sock.read(&mut [0u8; 1024]).await;
+                let response = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\n\r\n");
+                let _ = sock.write_all(response.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// The distinction `watch_until_dead` rests on: a completed request is not
+    /// proof of life, because the Cloudflare edge answers 530 for a hostname
+    /// whose tunnel is gone.
+    #[tokio::test]
+    async fn tunnel_alive_rejects_edge_error_and_accepts_a_real_response() {
+        let client = http_client().unwrap();
+
+        let live = serve_status("200 OK").await;
+        assert!(tunnel_alive(&client, &live).await);
+
+        let gone = serve_status("530 Origin DNS Error").await;
+        assert!(!tunnel_alive(&client, &gone).await);
+        // The same URL still looks fine to the transport-only check — which is
+        // exactly why liveness needs its own probe.
+        assert!(http_reachable(&client, &gone).await);
     }
 
     #[tokio::test]

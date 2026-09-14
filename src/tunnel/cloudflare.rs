@@ -14,6 +14,9 @@ pub struct CloudflareBackend {
     pub binary: PathBuf,
     /// Forwarding target, e.g. "http://localhost:3000".
     pub target: String,
+    /// Edge transport to pin: "quic", "http2", or "auto". `None` leaves
+    /// cloudflared on its own default (quic, falling back to http2).
+    pub protocol: Option<String>,
 }
 
 impl CloudflareBackend {
@@ -35,15 +38,25 @@ impl Tunnel for CloudflareBackend {
         // Rewrite the Host header to the local host:port. Dev servers (Vite,
         // webpack-dev-server, …) reject requests whose Host is the public tunnel
         // domain; sending `localhost:PORT` makes them work out of the box.
+        let mut args: Vec<&str> = vec![
+            "tunnel",
+            "--no-autoupdate",
+            "--http-host-header",
+            self.host_header(),
+            "--url",
+            self.target.as_str(),
+        ];
+        // cloudflared defaults to QUIC over UDP/7844. Networks that throttle or
+        // drop UDP (campus, corporate, some ISPs) make that path slow or flaky,
+        // and cloudflared's own switch to http2 costs seconds each time; pinning
+        // the transport up front skips that.
+        if let Some(protocol) = &self.protocol {
+            args.push("--protocol");
+            args.push(protocol.as_str());
+        }
+
         let mut child = Command::new(&self.binary)
-            .args([
-                "tunnel",
-                "--no-autoupdate",
-                "--http-host-header",
-                self.host_header(),
-                "--url",
-                &self.target,
-            ])
+            .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)

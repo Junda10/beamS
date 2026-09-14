@@ -31,6 +31,7 @@ async fn cloudflare_serves_local_http() {
     let backend = CloudflareBackend {
         binary: bin,
         target: format!("http://localhost:{port}"),
+        protocol: None,
     };
     let mut handle = backend.start().await.expect("start tunnel");
 
