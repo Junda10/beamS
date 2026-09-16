@@ -1,3 +1,5 @@
+use std::io::{BufRead, IsTerminal, Write};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use clap::Parser;
@@ -58,6 +60,29 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+/// List the live ports and ask which one to share. Re-asks on a bad number.
+fn prompt_for_port(ports: &[u16]) -> anyhow::Result<String> {
+    println!("  {} Found local servers on several ports:", "✓".green());
+    for (i, port) in ports.iter().enumerate() {
+        println!(
+            "    {}  http://localhost:{port}",
+            format!("{})", i + 1).bold()
+        );
+    }
+    loop {
+        print!("  Which one? [1-{}, or type a port] (1): ", ports.len());
+        std::io::stdout().flush()?;
+        let mut answer = String::new();
+        if std::io::stdin().lock().read_line(&mut answer)? == 0 {
+            anyhow::bail!("no port chosen");
+        }
+        match cli::pick_target(&answer, ports) {
+            Some(target) => return Ok(target),
+            None => println!("  {} pick a number from the list", "✗".red()),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -69,32 +94,51 @@ async fn main() -> anyhow::Result<()> {
         concat!("v", env!("CARGO_PKG_VERSION")).dimmed()
     );
 
-    // No target given? Use whichever common dev port is actually serving.
-    let target = match args.target.clone() {
+    // No target given? Use whichever common dev port is actually serving, and
+    // let the user choose when more than one is.
+    let mut target = match args.target.clone() {
         Some(t) => t,
-        None => match local::detect_port().await {
-            Some(port) => {
-                println!("  {} Found a local server on port {port}", "✓".green());
-                port.to_string()
+        None => {
+            let live = local::detect_ports().await;
+            match live.as_slice() {
+                [] => anyhow::bail!(
+                    "no local server found on the usual ports ({}) — pass one explicitly, e.g. `beams 3000`",
+                    local::COMMON_PORTS
+                        .iter()
+                        .map(u16::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                [port] => {
+                    println!("  {} Found a local server on port {port}", "✓".green());
+                    port.to_string()
+                }
+                // Piped / CI: nobody to ask, keep the old first-match behaviour.
+                [port, ..] if !std::io::stdin().is_terminal() => {
+                    println!("  {} Found a local server on port {port}", "✓".green());
+                    port.to_string()
+                }
+                _ => prompt_for_port(&live)?,
             }
-            None => anyhow::bail!(
-                "no local server found on the usual ports ({}) — pass one explicitly, e.g. `beams 3000`",
-                local::COMMON_PORTS
-                    .iter()
-                    .map(u16::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        },
+        }
     };
 
     // Check the local side first: a tunnel to nothing just moves the failure to
     // whoever opens the link.
-    let (host, port) = cli::parse_host_port(&target)?;
-    if !local::is_listening(&host, port).await {
+    let (mut host, port) = cli::parse_host_port(&target)?;
+    let Some(addr) = local::listening_addr(&host, port).await else {
         anyhow::bail!(
             "nothing is listening on {host}:{port} — start your server, then run beams again"
         );
+    };
+    // Forward to the address that answered. `localhost` may resolve to an empty
+    // ::1 first, and the tunnel client would then 502 against a working server.
+    if host == "localhost" {
+        host = match addr {
+            SocketAddr::V4(a) => a.ip().to_string(),
+            SocketAddr::V6(a) => format!("[{}]", a.ip()),
+        };
+        target = cli::parse_target(&target)?.replacen("://localhost:", &format!("://{host}:"), 1);
     }
 
     println!("  {} Setting up tunnel...", "✓".green());

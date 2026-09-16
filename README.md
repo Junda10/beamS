@@ -39,7 +39,8 @@ beams 3000 --protocol http2      # pin the Cloudflare transport if your network 
 Press `Ctrl+C` to stop. Notes:
 
 - With no argument, beams probes 3000, 5173, 8080, 8000, 4200, 5000, 1313 and
-  4321 and takes the first port that is actually serving.
+  4321. If one is serving it uses that; if several are, it lists them and asks
+  which to share (or type any other port).
 - It checks your local port before opening the tunnel, so a link that would 502
   fails immediately instead of on your visitor's screen.
 - The public URL is copied to your clipboard automatically.

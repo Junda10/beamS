@@ -60,9 +60,43 @@ pub fn parse_host_port(input: &str) -> Result<(String, u16)> {
     Ok(("localhost".to_string(), port))
 }
 
+/// Turn an answer to the "which port?" prompt into a target: empty picks the
+/// first entry, `1..=n` picks from the list, anything else is taken as a
+/// port/address typed by hand. `None` means an out-of-range list number.
+pub fn pick_target(answer: &str, ports: &[u16]) -> Option<String> {
+    let answer = answer.trim();
+    if answer.is_empty() {
+        return ports.first().map(u16::to_string);
+    }
+    match answer.parse::<usize>() {
+        Ok(n) if n <= ports.len() => n.checked_sub(1).map(|i| ports[i].to_string()),
+        _ => Some(answer.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_target_from_prompt_answer() {
+        let ports = [3000, 5173];
+        assert_eq!(pick_target("", &ports).as_deref(), Some("3000"));
+        assert_eq!(
+            pick_target(
+                "2
+", &ports
+            )
+            .as_deref(),
+            Some("5173")
+        );
+        assert_eq!(pick_target("0", &ports), None);
+        assert_eq!(pick_target("8081", &ports).as_deref(), Some("8081"));
+        assert_eq!(
+            pick_target("localhost:9000", &ports).as_deref(),
+            Some("localhost:9000")
+        );
+    }
 
     #[test]
     fn host_port_from_bare_port() {
