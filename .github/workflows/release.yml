@@ -303,13 +303,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           # Trusted publishing needs Node >= 22.14 and npm >= 11.5.1.
+          # No `registry-url`: it writes an .npmrc with a placeholder
+          # NODE_AUTH_TOKEN, and npm then sends that instead of using OIDC.
           node-version: '24.x'
-          registry-url: 'https://registry.npmjs.org'
       - run: npm install -g npm@latest
       - run: |
           for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith("-npm-package.tar.gz")] | any)'); do
             pkg=$(echo "$release" | jq '.artifacts[] | select(endswith("-npm-package.tar.gz"))' --raw-output)
-            npm publish --access public "./npm/${pkg}"
+            npm publish --access public --registry https://registry.npmjs.org "./npm/${pkg}"
           done
 
   announce:
