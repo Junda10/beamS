@@ -283,6 +283,12 @@ jobs:
       - plan
       - host
     runs-on: "ubuntu-22.04"
+    # npm Trusted Publishing: npm verifies this workflow via GitHub's OIDC token,
+    # so no NPM_TOKEN secret is needed. Hand-edited; see allow-dirty in
+    # dist-workspace.toml.
+    permissions:
+      contents: read
+      id-token: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PLAN: ${{ needs.plan.outputs.val }}
@@ -296,15 +302,15 @@ jobs:
           merge-multiple: true
       - uses: actions/setup-node@v6
         with:
-          node-version: '20.x'
+          # Trusted publishing needs Node >= 22.14 and npm >= 11.5.1.
+          node-version: '24.x'
           registry-url: 'https://registry.npmjs.org'
+      - run: npm install -g npm@latest
       - run: |
           for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith("-npm-package.tar.gz")] | any)'); do
             pkg=$(echo "$release" | jq '.artifacts[] | select(endswith("-npm-package.tar.gz"))' --raw-output)
             npm publish --access public "./npm/${pkg}"
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   announce:
     needs:

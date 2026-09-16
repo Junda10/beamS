@@ -20,3 +20,6 @@ hosting = "github"
 # Whether to install an updater program
 install-updater = false
 publish-jobs = ["npm"]
+# release.yml's publish-npm job is hand-edited for npm Trusted Publishing (OIDC);
+# don't fail the plan because it differs from what dist would generate.
+allow-dirty = ["ci"]
