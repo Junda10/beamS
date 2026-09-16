@@ -30,9 +30,43 @@ pub fn extract_bore_address(line: &str) -> Option<String> {
     None
 }
 
+/// `"GET /path?query"` for a cloudflared JSON debug line that logs an incoming
+/// request, `None` for anything else. Requests beams makes itself (readiness and
+/// liveness probes, tagged by user agent) are skipped. Response lines carry no
+/// request id to pair them with, so statuses are not reported.
+pub fn request_line(line: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    v.get("path")?;
+    let agent = v["headers"]["User-Agent"][0].as_str().unwrap_or("");
+    if agent.starts_with("beams/") {
+        return None;
+    }
+    // message: "GET https://host/path?query HTTP/1.1"
+    let mut parts = v["message"].as_str()?.split_whitespace();
+    let method = parts.next()?;
+    let url = parts.next()?;
+    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let path = after_scheme.find('/').map_or("/", |i| &after_scheme[i..]);
+    Some(format!("{method} {path}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_line_from_cloudflared_debug_json() {
+        let request = r#"{"connIndex":0,"content-length":0,"event":1,"headers":{"User-Agent":["curl/8.21.0"]},"host":"a-b.trycloudflare.com","level":"debug","message":"GET https://a-b.trycloudflare.com/nope?x=1 HTTP/1.1","originService":"http://127.0.0.1:4190","path":"/nope","time":"2026-09-16T08:17:03Z"}"#;
+        assert_eq!(request_line(request).as_deref(), Some("GET /nope?x=1"));
+
+        let response = r#"{"connIndex":0,"content-length":335,"event":1,"level":"debug","message":"404 File not found","originService":"http://127.0.0.1:4190","time":"2026-09-16T08:17:03Z"}"#;
+        assert_eq!(request_line(response), None);
+
+        let probe = request.replace("curl/8.21.0", "beams/0.2.3");
+        assert_eq!(request_line(&probe), None);
+
+        assert_eq!(request_line("not json"), None);
+    }
 
     #[test]
     fn extracts_bore_address() {

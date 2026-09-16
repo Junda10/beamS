@@ -60,6 +60,12 @@ pub fn print_tcp_banner(public_addr: &str, local_port: u16, copied: bool, ready:
     );
 }
 
+/// One line per request that reached the local server through the tunnel.
+pub fn print_request(request: &str) {
+    use owo_colors::OwoColorize;
+    println!("  {} {request}", "→".dimmed());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

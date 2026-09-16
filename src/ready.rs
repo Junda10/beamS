@@ -123,6 +123,8 @@ async fn dns_has_record(client: &reqwest::Client, host: &str) -> bool {
 
 fn http_client() -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
+        // Lets the request log tell our own probes apart from real visitors.
+        .user_agent(concat!("beams/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(5))
         .build()
 }

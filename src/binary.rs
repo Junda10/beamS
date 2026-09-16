@@ -17,14 +17,19 @@ const BORE_VERSION: &str = "v0.6.0";
 const CLOUDFLARED_VERSION: &str = "2026.9.1";
 
 impl Tool {
-    /// File name of the cached executable for this tool.
-    pub fn bin_name(self) -> &'static str {
-        match self {
-            Tool::Cloudflared if cfg!(windows) => "cloudflared.exe",
-            Tool::Cloudflared => "cloudflared",
-            Tool::Bore if cfg!(windows) => "bore.exe",
-            Tool::Bore => "bore",
-        }
+    /// File name of the cached executable for this tool. The pinned version is
+    /// part of the name: the cache is reused whenever the file exists, so bumping
+    /// a version constant only reaches existing users if it changes the path.
+    pub fn bin_name(self) -> String {
+        let version = match self {
+            Tool::Cloudflared => CLOUDFLARED_VERSION,
+            Tool::Bore => BORE_VERSION,
+        };
+        format!(
+            "{}-{version}{}",
+            self.archive_entry(),
+            std::env::consts::EXE_SUFFIX
+        )
     }
 
     /// Name of the entry inside the downloaded archive (without any `.exe`).
@@ -261,6 +266,6 @@ mod tests {
         let path = binary_path(Tool::Cloudflared).unwrap();
         assert!(path.starts_with(&dir));
         let name = path.file_name().unwrap().to_str().unwrap();
-        assert!(name == "cloudflared" || name == "cloudflared.exe");
+        assert!(name.starts_with(&format!("cloudflared-{CLOUDFLARED_VERSION}")));
     }
 }

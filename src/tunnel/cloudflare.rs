@@ -3,11 +3,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{ChildStderr, Command};
 
 use super::{Tunnel, TunnelHandle};
 use crate::error::{BeamsError, Result};
-use crate::parser::extract_public_url;
+use crate::output;
+use crate::parser::{extract_public_url, request_line};
 
 /// Random-URL HTTPS tunnel via `cloudflared` quick tunnel.
 pub struct CloudflareBackend {
@@ -38,9 +39,15 @@ impl Tunnel for CloudflareBackend {
         // Rewrite the Host header to the local host:port. Dev servers (Vite,
         // webpack-dev-server, …) reject requests whose Host is the public tunnel
         // domain; sending `localhost:PORT` makes them work out of the box.
+        // Debug level is the only one where cloudflared logs each proxied request;
+        // JSON makes those lines parseable. It all stays in our pipe.
         let mut args: Vec<&str> = vec![
             "tunnel",
             "--no-autoupdate",
+            "--loglevel",
+            "debug",
+            "--output",
+            "json",
             "--http-host-header",
             self.host_header(),
             "--url",
@@ -66,10 +73,11 @@ impl Tunnel for CloudflareBackend {
         let stderr = child.stderr.take().ok_or_else(|| {
             BeamsError::TunnelStart("could not read cloudflared output".to_string())
         })?;
-        let mut lines = BufReader::new(stderr).lines();
+        let mut stderr = BufReader::new(stderr);
+        let mut buf = Vec::new();
 
         let found = tokio::time::timeout(Duration::from_secs(30), async {
-            while let Ok(Some(line)) = lines.next_line().await {
+            while let Some(line) = next_line(&mut stderr, &mut buf).await {
                 if let Some(url) = extract_public_url(&line) {
                     return Some(url);
                 }
@@ -84,12 +92,29 @@ impl Tunnel for CloudflareBackend {
                 // Keep draining stderr for the tunnel's lifetime; if we stop
                 // reading, the pipe closes and cloudflared dies with SIGPIPE on
                 // its next log write, killing the tunnel right after it comes up.
-                tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+                tokio::spawn(async move {
+                    while let Some(line) = next_line(&mut stderr, &mut buf).await {
+                        if let Some(request) = request_line(&line) {
+                            output::print_request(&request);
+                        }
+                    }
+                });
                 Ok(TunnelHandle::from_child(url, child))
             }
             None => Err(BeamsError::TunnelStart(
                 "cloudflared exited without providing a public URL".to_string(),
             )),
         }
+    }
+}
+
+/// Read one line of cloudflared output. Byte-based on purpose: `lines()` errors
+/// on invalid UTF-8, and a drain loop that stops reading lets the pipe fill or
+/// close and takes the tunnel down with it. `None` only at EOF or a read error.
+async fn next_line(reader: &mut BufReader<ChildStderr>, buf: &mut Vec<u8>) -> Option<String> {
+    buf.clear();
+    match reader.read_until(b'\n', buf).await {
+        Ok(0) | Err(_) => None,
+        Ok(_) => Some(String::from_utf8_lossy(buf).into_owned()),
     }
 }

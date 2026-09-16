@@ -7,6 +7,7 @@ use owo_colors::OwoColorize;
 
 use beams::binary::{self, Tool};
 use beams::cli;
+use beams::error::BeamsError;
 use beams::local;
 use beams::output;
 use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel};
@@ -165,87 +166,137 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let forward = format!("{host}:{port}");
-    let mut first_run = true;
-    let mut failures: u32 = 0;
 
-    loop {
-        let mut handle = match backend.start().await {
-            Ok(handle) => {
-                failures = 0;
-                handle
-            }
-            Err(e) => {
-                failures += 1;
-                if failures >= 5 {
-                    return Err(e.into());
+    // From outside, a dead local server just looks like a broken tunnel (the
+    // public URL answers 502), so say so here where the user can act on it.
+    tokio::spawn(watch_local(addr));
+
+    // Race the whole session against Ctrl+C. Once a signal handler exists the
+    // default "kill the process" is gone, so dialing, readiness and backoff must
+    // be interruptible too, not just the steady state. Dropping the session
+    // drops the handle, and `kill_on_drop` stops the tunnel process.
+    let session = async {
+        let mut first_run = true;
+        let mut failures: u32 = 0;
+
+        loop {
+            let started = match backend.start().await {
+                Ok(mut handle) => {
+                    let public_url = handle.public_url().to_string();
+                    // Wait until the tunnel is actually reachable before showing
+                    // the address, so it works the moment the user opens it
+                    // (quick tunnels need a few seconds for DNS/edge propagation).
+                    // If the process dies meanwhile, stop waiting on a dead tunnel.
+                    println!("  {} Waiting for the tunnel to come online...", "…".cyan());
+                    let ready = tokio::select! {
+                        ready = beams::ready::wait_until_ready(&public_url, args.tcp) => Some(ready),
+                        _ = handle.wait() => None,
+                    };
+                    match ready {
+                        Some(ready) => Ok((handle, public_url, ready)),
+                        None => Err(BeamsError::TunnelStart(
+                            "the tunnel process exited while coming online".to_string(),
+                        )),
+                    }
                 }
-                // Back off so a relay that is refusing everyone right now gets
-                // room to recover, instead of five dials inside ten seconds.
-                // failures is 1..=4 here, so this is 2s, 4s, 8s, 16s.
-                let wait = Duration::from_secs(1u64 << failures);
-                eprintln!(
-                    "  {} {e} — retrying in {}s ({failures}/5)",
+                Err(e) => Err(e),
+            };
+
+            let (mut handle, public_url, ready) = match started {
+                Ok(started) => {
+                    failures = 0;
+                    started
+                }
+                Err(e) => {
+                    failures += 1;
+                    if failures >= 5 {
+                        return anyhow::Result::<()>::Err(e.into());
+                    }
+                    // Back off so a relay that is refusing everyone right now gets
+                    // room to recover, instead of five dials inside ten seconds.
+                    // failures is 1..=4 here, so this is 2s, 4s, 8s, 16s.
+                    let wait = Duration::from_secs(1u64 << failures);
+                    eprintln!(
+                        "  {} {e} — retrying in {}s ({failures}/5)",
+                        "!".yellow(),
+                        wait.as_secs()
+                    );
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+            };
+
+            let copied = local::copy_to_clipboard(&public_url).await;
+            if args.tcp {
+                output::print_tcp_banner(&public_url, port, copied, ready);
+            } else {
+                output::print_banner(&public_url, &forward, copied, ready)?;
+                if args.open && first_run {
+                    local::open_in_browser(&public_url);
+                }
+            }
+            if !ready {
+                // Almost always a stale negative DNS entry: something looked the
+                // hostname up before it was registered, and quick-tunnel zones
+                // cache NXDOMAIN for 30 minutes.
+                println!(
+                    "\n  {} If it won't open, flush this machine's DNS cache:\n      {}",
                     "!".yellow(),
-                    wait.as_secs()
+                    if cfg!(target_os = "macos") {
+                        "sudo killall -HUP mDNSResponder"
+                    } else if cfg!(windows) {
+                        "ipconfig /flushdns"
+                    } else {
+                        "sudo resolvectl flush-caches"
+                    }
+                    .bold()
                 );
-                tokio::time::sleep(wait).await;
-                continue;
             }
-        };
+            first_run = false;
 
-        // Wait until the tunnel is actually reachable before showing the address,
-        // so it works the moment the user opens it (quick tunnels need a few seconds
-        // for DNS/edge propagation).
-        println!("  {} Waiting for the tunnel to come online...", "…".cyan());
-        let ready = beams::ready::wait_until_ready(handle.public_url(), args.tcp).await;
-
-        let copied = local::copy_to_clipboard(handle.public_url()).await;
-        if args.tcp {
-            output::print_tcp_banner(handle.public_url(), port, copied, ready);
-        } else {
-            output::print_banner(handle.public_url(), &forward, copied, ready)?;
-            if args.open && first_run {
-                local::open_in_browser(handle.public_url());
-            }
-        }
-        if !ready {
-            // Almost always a stale negative DNS entry: something looked the
-            // hostname up before it was registered, and quick-tunnel zones cache
-            // NXDOMAIN for 30 minutes.
-            println!(
-                "\n  {} If it won't open, flush this machine's DNS cache:\n      {}",
-                "!".yellow(),
-                if cfg!(target_os = "macos") {
-                    "sudo killall -HUP mDNSResponder"
-                } else {
-                    "sudo resolvectl flush-caches"
+            tokio::select! {
+                // The process is still alive but the edge stopped routing to it.
+                // Nothing else ends the wait below, so tear it down ourselves.
+                _ = beams::ready::watch_until_dead(&public_url, args.tcp) => {
+                    println!("\n  {} Tunnel stopped responding — reconnecting...", "…".yellow());
+                    handle.shutdown().await;
                 }
-                .bold()
-            );
+                // The relay dropped us (quick tunnels do this on long runs) — dial
+                // again instead of making the user re-run the command. The public
+                // URL changes, so the banner is reprinted.
+                _ = handle.wait() => {
+                    println!("\n  {} Tunnel dropped — reconnecting...", "…".yellow());
+                }
+            }
         }
-        first_run = false;
+    };
 
-        // `handle` is borrowed mutably by the select below, so take the URL now.
-        let public_url = handle.public_url().to_string();
+    tokio::select! {
+        result = session => result,
+        _ = shutdown_signal() => {
+            println!("\n  Stopping...");
+            Ok(())
+        }
+    }
+}
 
-        tokio::select! {
-            _ = shutdown_signal() => {
-                println!("\n  Stopping...");
-                handle.shutdown().await;
-                return Ok(());
-            }
-            // The process is still alive but the edge stopped routing to it.
-            // Nothing else ends the wait below, so tear it down ourselves.
-            _ = beams::ready::watch_until_dead(&public_url, args.tcp) => {
-                println!("\n  {} Tunnel stopped responding — reconnecting...", "…".yellow());
-                handle.shutdown().await;
-            }
-            // The relay dropped us (quick tunnels do this on long runs) — dial
-            // again instead of making the user re-run the command. The public
-            // URL changes, so the banner is reprinted.
-            _ = handle.wait() => {
-                println!("\n  {} Tunnel dropped — reconnecting...", "…".yellow());
-            }
+/// Poll the local server and report when it stops answering or comes back.
+async fn watch_local(addr: SocketAddr) {
+    let host = addr.ip().to_string();
+    let mut up = true;
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        if local::is_listening(&host, addr.port()).await == up {
+            continue;
+        }
+        up = !up;
+        if up {
+            println!("  {} Local server on {addr} is back", "✓".green());
+        } else {
+            println!(
+                "  {} Local server on {addr} stopped responding — visitors get errors until it is back",
+                "!".yellow()
+            );
         }
     }
 }

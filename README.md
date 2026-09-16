@@ -46,6 +46,8 @@ Press `Ctrl+C` to stop. Notes:
 - The public URL is copied to your clipboard automatically.
 - If the relay drops the tunnel — or quietly stops routing to it — beams notices,
   reconnects and prints the new URL.
+- Each visitor request is printed as it arrives (`→ GET /path`, Cloudflare
+  tunnels only), and beams warns if your local server stops answering.
 - The default Cloudflare URL is random and changes each run; quick tunnels take a
   few seconds to become reachable.
 - `--subdomain` names are first-come on the shared loca.lt server.
@@ -54,7 +56,7 @@ Press `Ctrl+C` to stop. Notes:
   to QUIC over UDP/7844; on networks that throttle or block UDP (campus,
   corporate, some ISPs) `--protocol http2` connects faster and stays steadier.
 - Dev servers (Vite, etc.) work out of the box — beams rewrites the `Host` header
-  to your local `localhost:PORT`.
+  to the local address that answered (e.g. `127.0.0.1:PORT`).
 
 ## How it works
 
