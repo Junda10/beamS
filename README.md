@@ -1,77 +1,88 @@
 # beams
 
-> Beam your localhost to the world — free, friendly, for everyone.
+> Share your localhost with the world — free, no signup.
 
-Run `beams` in your project and your dev server is on the internet: it finds the
-port, opens a public `https://*.trycloudflare.com` URL, copies it to your
-clipboard and prints a QR code so you can open it on your phone. Free forever,
-no signup — it auto-downloads what it needs on first run.
+Start your dev server, run `beams`, and get a public HTTPS link you can send to
+anyone or open on your phone.
 
 ## Install
 
-```bash
-# Run instantly, no install (npm package is published as "beams-cli")
-npx beams-cli
-
-# Or install globally — the command is `beams`
-npm i -g beams-cli      # then:  beams
-
-# Or build from source
-cargo install --path .
-```
-
-> The npm package is named `beams-cli` because `beams` was already taken on npm,
-> but the command you run is always `beams`.
-
-## Usage
+You need [Node.js](https://nodejs.org) (for `npm`). Then:
 
 ```bash
-beams                            # find the dev server on the usual ports and share it
-beams 3000                       # random HTTPS URL via Cloudflare (default)
-beams http://localhost:8080      # explicit URL
-
-beams 3000 --open                # also open the public URL in your browser
-beams 3000 --subdomain myapp     # fixed subdomain -> https://myapp.loca.lt (localtunnel)
-beams 22 --tcp                   # raw TCP (SSH, databases, …) -> bore.pub:PORT (bore)
-beams 3000 --protocol http2      # pin the Cloudflare transport if your network blocks UDP
+npm install -g beams-cli
 ```
 
-Press `Ctrl+C` to stop. Notes:
+The package is called `beams-cli`, but the command is `beams`.
 
-- With no argument, beams probes 3000, 5173, 8080, 8000, 4200, 5000, 1313 and
-  4321. If one is serving it uses that; if several are, it lists them and asks
-  which to share (or type any other port).
-- It checks your local port before opening the tunnel, so a link that would 502
-  fails immediately instead of on your visitor's screen.
-- The public URL is copied to your clipboard automatically.
-- If the relay drops the tunnel — or quietly stops routing to it — beams notices,
-  reconnects and prints the new URL.
-- Each visitor request is printed as it arrives (`→ GET /path`, Cloudflare
-  tunnels only), and beams warns if your local server stops answering.
-- The default Cloudflare URL is random and changes each run; quick tunnels take a
-  few seconds to become reachable.
-- `--subdomain` names are first-come on the shared loca.lt server.
-- `--tcp` gives you a random `bore.pub` port for any TCP service.
-- `--protocol quic|http2|auto` pins how cloudflared reaches the edge. It defaults
-  to QUIC over UDP/7844; on networks that throttle or block UDP (campus,
-  corporate, some ISPs) `--protocol http2` connects faster and stays steadier.
-- Dev servers (Vite, etc.) work out of the box — beams rewrites the `Host` header
-  to the local address that answered (e.g. `127.0.0.1:PORT`).
+Don't want to install? Run it once with `npx beams-cli`.
+
+**Update** to the latest version:
+
+```bash
+npm install -g beams-cli@latest
+beams --version
+```
+
+## Use it
+
+1. Start your project as usual, e.g. `npm run dev`.
+2. In another terminal, in any folder, run:
+
+   ```bash
+   beams
+   ```
+
+3. Open the link it prints. It's already copied to your clipboard, and there's a
+   QR code for your phone.
+
+Press `Ctrl+C` to stop sharing.
+
+`beams` finds your dev server by itself (ports 3000, 5173, 8080, 8000, 4200,
+5000, 1313, 4321). If several are running it asks which one to share. You can
+also name the port:
+
+```bash
+beams 3000
+```
+
+While it runs you'll see each visit (`→ GET /about`), and a warning if your dev
+server stops.
+
+## More options
+
+```bash
+beams 3000 --open              # also open the link in your browser
+beams 3000 --subdomain myapp   # pick the name: https://myapp.loca.lt
+beams 22 --tcp                 # share a raw TCP port (SSH, databases)
+beams 3000 --protocol http2    # use this if the link is slow or keeps dropping
+```
+
+## Troubleshooting
+
+- **"nothing is listening on …"** — your dev server isn't running on that port.
+  Start it first, or pass the right port.
+- **"not reachable from this machine yet"** — the link is usually fine within a
+  minute. If your browser still can't open it, clear the DNS cache:
+  `ipconfig /flushdns` (Windows), `sudo killall -HUP mDNSResponder` (macOS).
+- **Slow or keeps disconnecting** — try `--protocol http2`. Some Wi-Fi and
+  office networks block the default connection type.
+- The link changes every time you run `beams`. If the connection drops, beams
+  reconnects by itself and prints the new link.
 
 ## How it works
 
-`beams` dials out to a relay that assigns a public address and forwards traffic
-back to your localhost — no inbound ports, no account, no cost. It wraps three
-free backends and downloads what it needs on first run:
+`beams` connects out to a free relay that gives you a public address and sends
+visitors back to your computer. You don't open any ports and there's no
+account. By default it uses a Cloudflare Quick Tunnel (`*.trycloudflare.com`);
+`--subdomain` uses localtunnel and `--tcp` uses bore. The tools it needs are
+downloaded automatically the first time.
 
-- **Cloudflare Quick Tunnel** (default) — random `*.trycloudflare.com` HTTPS URL
-- **localtunnel** (`--subdomain`) — chosen `*.loca.lt` subdomain
-- **bore** (`--tcp`) — raw TCP via `bore.pub`
+## Build from source
 
-## Roadmap
-
-- v0.3 — bring-your-own domain; config file for multiple tunnels
-- later — background daemon
+```bash
+cargo install --path .
+```
 
 ## License
 
