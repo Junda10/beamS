@@ -1,28 +1,57 @@
+use std::net::SocketAddr;
 use std::time::Duration;
 
 /// Seconds to wait for the hostname to appear in public DNS, then for the edge
 /// to actually route to us. Quick tunnels normally clear both in a few seconds.
 const DNS_ATTEMPTS: u32 = 20;
 const REACH_ATTEMPTS: u32 = 15;
+/// Positive answers in a row before the name counts as published. Right after a
+/// quick-tunnel name appears, the zone's anycast nameservers still disagree for
+/// a few seconds (yes, no, yes, no...); a resolver that hits a stale one then
+/// caches the NXDOMAIN.
+const DNS_SETTLED: u32 = 3;
 
 /// Poll until the public endpoint is actually reachable, so the URL we show the
 /// user works immediately. Returns `true` once reachable, or `false` if it gives
 /// up (the caller shows the URL anyway, with a warning).
 ///
 /// Quick-tunnel hostnames are registered on demand, so for the first few seconds
-/// they do not resolve. Asking the OS resolver during that window is worse than
-/// not checking at all: the NXDOMAIN is cached for the zone's SOA minimum —
-/// 1800s for trycloudflare.com — so the browser keeps failing with
-/// ERR_NAME_NOT_RESOLVED for half an hour after the tunnel came up. So we
-/// confirm the record exists over DNS-over-HTTPS first, which never touches the
-/// system resolver, and only then let anything look the name up normally.
+/// they do not resolve. Any caching resolver asked during that window caches
+/// the NXDOMAIN for the zone's SOA minimum (60s for trycloudflare.com when
+/// checked, 1800s earlier) and keeps answering it after the name exists. For
+/// the OS resolver that means ERR_NAME_NOT_RESOLVED in the browser. Polling a
+/// public resolver instead only moves the problem: 1.1.1.1 caches the early
+/// NXDOMAIN too, so the poll keeps seeing "no such name" after the name exists.
+/// So we ask the zone's authoritative nameserver directly, which has no cache,
+/// and only then let anything look the name up normally.
 pub async fn wait_until_ready(public_url: &str, is_tcp: bool) -> bool {
     let Ok(client) = http_client() else {
         return false;
     };
     let host = hostname_of(public_url);
 
-    if !retry(DNS_ATTEMPTS, || dns_has_record(&client, host)).await {
+    let mut nameserver = zone_nameserver(&client, host).await;
+    let mut streak = 0;
+    for _ in 0..DNS_ATTEMPTS {
+        let exists = match nameserver {
+            Some(ns) => match authoritative_answer(ns, host).await {
+                Some(found) => found,
+                // A referral (host at a zone apex, e.g. bore.pub) or UDP/53
+                // blocked: no authoritative view, so use DoH from here on.
+                None => {
+                    nameserver = None;
+                    dns_has_record(&client, host).await
+                }
+            },
+            None => dns_has_record(&client, host).await,
+        };
+        streak = if exists { streak + 1 } else { 0 };
+        if streak == DNS_SETTLED {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    if streak < DNS_SETTLED {
         return false;
     }
 
@@ -103,22 +132,93 @@ fn hostname_of(public_url: &str) -> &str {
 /// True once `host` has an A record in public DNS. Queries Cloudflare's
 /// DNS-over-HTTPS endpoint by IP, so the lookup neither goes through nor
 /// poisons the machine's own resolver cache.
+///
+/// Only used when no authoritative nameserver answers: 1.1.1.1 caches an early
+/// NXDOMAIN, so this can miss a fresh name for up to the SOA minimum.
 async fn dns_has_record(client: &reqwest::Client, host: &str) -> bool {
-    let Ok(resp) = client
-        .get(format!("https://1.1.1.1/dns-query?name={host}&type=A"))
+    doh(client, host, "A")
+        .await
+        .is_some_and(|json| json["Answer"].as_array().is_some_and(|a| !a.is_empty()))
+}
+
+/// One DNS-over-HTTPS query to Cloudflare's resolver, by IP.
+async fn doh(client: &reqwest::Client, name: &str, kind: &str) -> Option<serde_json::Value> {
+    let resp = client
+        .get(format!("https://1.1.1.1/dns-query?name={name}&type={kind}"))
         .header("accept", "application/dns-json")
         .send()
         .await
-    else {
-        return false;
-    };
-    let Ok(body) = resp.text().await else {
-        return false;
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) else {
-        return false;
-    };
-    json["Answer"].as_array().is_some_and(|a| !a.is_empty())
+        .ok()?;
+    serde_json::from_str(&resp.text().await.ok()?).ok()
+}
+
+/// An IPv4 address of a nameserver for the zone `host` lives in (its parent
+/// domain). Every name looked up here already exists, so no resolver gets to
+/// cache a negative answer for the tunnel's hostname.
+async fn zone_nameserver(client: &reqwest::Client, host: &str) -> Option<SocketAddr> {
+    let zone = host.split_once('.')?.1;
+    let json = doh(client, zone, "NS").await?;
+    let ns = json["Answer"]
+        .as_array()?
+        .iter()
+        .filter(|a| a["type"] == 2)
+        .find_map(|a| a["data"].as_str())?
+        .trim_end_matches('.')
+        .to_owned();
+    tokio::net::lookup_host((ns, 53))
+        .await
+        .ok()?
+        .find(SocketAddr::is_ipv4)
+}
+
+/// Ask an authoritative nameserver for `host`'s A record over plain UDP. It
+/// answers from its own zone data, never from a cache. `None` when there is no
+/// authoritative answer to be had (timeout, error, or a referral).
+async fn authoritative_answer(server: SocketAddr, host: &str) -> Option<bool> {
+    let id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .subsec_nanos() as u16;
+    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok()?;
+    socket.send_to(&dns_query(id, host), server).await.ok()?;
+    let mut buf = [0u8; 512];
+    let n = tokio::time::timeout(Duration::from_secs(2), socket.recv(&mut buf))
+        .await
+        .ok()?
+        .ok()?;
+    parse_answer(&buf[..n], id)
+}
+
+/// A DNS query for `host`'s A record, recursion not requested.
+fn dns_query(id: u16, host: &str) -> Vec<u8> {
+    let mut q = id.to_be_bytes().to_vec();
+    // flags 0, one question, no other records
+    q.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    for label in host.split('.') {
+        q.push(label.len() as u8);
+        q.extend_from_slice(label.as_bytes());
+    }
+    q.extend_from_slice(&[0, 0, 1, 0, 1]); // root label, type A, class IN
+    q
+}
+
+/// `Some(true)` if an authoritative reply to query `id` carries an answer,
+/// `Some(false)` if it says the name (or its A record) does not exist, `None`
+/// if it is not an authoritative reply to our query at all.
+fn parse_answer(resp: &[u8], id: u16) -> Option<bool> {
+    if resp.len() < 12 || resp[..2] != id.to_be_bytes() {
+        return None;
+    }
+    let is_reply = resp[2] & 0x80 != 0;
+    let authoritative = resp[2] & 0x04 != 0;
+    if !is_reply || !authoritative {
+        return None;
+    }
+    match resp[3] & 0x0f {
+        0 => Some(u16::from_be_bytes([resp[6], resp[7]]) > 0),
+        3 => Some(false),
+        _ => None,
+    }
 }
 
 fn http_client() -> reqwest::Result<reqwest::Client> {
@@ -209,6 +309,23 @@ mod tests {
         // The same URL still looks fine to the transport-only check — which is
         // exactly why liveness needs its own probe.
         assert!(http_reachable(&client, &gone).await);
+    }
+
+    #[test]
+    fn parse_answer_trusts_only_an_authoritative_reply_to_our_query() {
+        let mut resp = dns_query(7, "happy-cat-42.trycloudflare.com");
+        resp[2] = 0x84; // reply + authoritative, NOERROR, no answer yet
+        assert_eq!(parse_answer(&resp, 7), Some(false));
+        resp[7] = 1; // one answer record
+        assert_eq!(parse_answer(&resp, 7), Some(true));
+        resp[3] = 3; // NXDOMAIN
+        resp[7] = 0;
+        assert_eq!(parse_answer(&resp, 7), Some(false));
+        // A stray reply to some other query proves nothing.
+        assert_eq!(parse_answer(&resp, 8), None);
+        // A referral is not authoritative: fall back rather than wait it out.
+        resp[2] = 0x80;
+        assert_eq!(parse_answer(&resp, 7), None);
     }
 
     #[tokio::test]
