@@ -3,13 +3,15 @@ use std::time::Duration;
 
 /// Seconds to wait for the hostname to appear in public DNS, then for the edge
 /// to actually route to us. Quick tunnels normally clear both in a few seconds.
-const DNS_ATTEMPTS: u32 = 20;
+const DNS_ATTEMPTS: u32 = 30;
 const REACH_ATTEMPTS: u32 = 15;
 /// Positive answers in a row before the name counts as published. Right after a
 /// quick-tunnel name appears, the zone's anycast nameservers still disagree for
 /// a few seconds (yes, no, yes, no...); a resolver that hits a stale one then
 /// caches the NXDOMAIN.
 const DNS_SETTLED: u32 = 3;
+/// Authoritative misses in a row before falling back to DoH for good.
+const NS_MISSES: u32 = 3;
 
 /// Poll until the public endpoint is actually reachable, so the URL we show the
 /// user works immediately. Returns `true` once reachable, or `false` if it gives
@@ -31,15 +33,22 @@ pub async fn wait_until_ready(public_url: &str, is_tcp: bool) -> bool {
     let host = hostname_of(public_url);
 
     let mut nameserver = zone_nameserver(&client, host).await;
-    let mut streak = 0;
+    let (mut streak, mut misses) = (0, 0);
     for _ in 0..DNS_ATTEMPTS {
         let exists = match nameserver {
             Some(ns) => match authoritative_answer(ns, host).await {
-                Some(found) => found,
-                // A referral (host at a zone apex, e.g. bore.pub) or UDP/53
-                // blocked: no authoritative view, so use DoH from here on.
+                Some(found) => {
+                    misses = 0;
+                    found
+                }
+                // No authoritative answer this time (lost packet, referral at a
+                // zone apex like bore.pub, UDP/53 blocked): use DoH for this
+                // attempt, and only give up on the nameserver if it keeps failing.
                 None => {
-                    nameserver = None;
+                    misses += 1;
+                    if misses == NS_MISSES {
+                        nameserver = None;
+                    }
                     dns_has_record(&client, host).await
                 }
             },
