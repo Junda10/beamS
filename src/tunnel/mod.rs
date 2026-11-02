@@ -9,6 +9,8 @@ pub use localtunnel::LocaltunnelBackend;
 use crate::error::Result;
 
 /// A backend that can open a tunnel. Each backend owns its own config.
+// async_trait's generated signature trips clippy 1.99's double_must_use.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait Tunnel {
     async fn start(&self) -> Result<TunnelHandle>;
