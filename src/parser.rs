@@ -30,6 +30,29 @@ pub fn extract_bore_address(line: &str) -> Option<String> {
     None
 }
 
+/// The reason cloudflared gives before exiting, for a line that carries one.
+/// Its fatal startup errors (e.g. "quick tunnel provisioning failed with status
+/// 429: ...") are printed as plain text even with `--output json`; JSON lines
+/// count only at error/fatal level.
+pub fn failure_reason(line: &str) -> Option<String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let reason = match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(v) if matches!(v["level"].as_str(), Some("error" | "fatal")) => {
+            let msg = v["message"].as_str().unwrap_or("");
+            match v["error"].as_str() {
+                Some(err) => format!("{msg}: {err}"),
+                None => msg.to_string(),
+            }
+        }
+        Ok(_) => return None,
+        Err(_) => line.to_string(),
+    };
+    Some(reason.chars().take(200).collect())
+}
+
 /// `"GET /path?query"` for a cloudflared JSON debug line that logs an incoming
 /// request, `None` for anything else. Requests beams makes itself (readiness and
 /// liveness probes, tagged by user agent) are skipped. Response lines carry no
@@ -66,6 +89,25 @@ mod tests {
         assert_eq!(request_line(&probe), None);
 
         assert_eq!(request_line("not json"), None);
+    }
+
+    #[test]
+    fn failure_reason_from_cloudflared_output() {
+        let plain = "quick tunnel provisioning failed with status 429: error code: 1015\n";
+        assert_eq!(
+            failure_reason(plain).as_deref(),
+            Some("quick tunnel provisioning failed with status 429: error code: 1015")
+        );
+        let json_err = r#"{"level":"error","error":"dial tcp: refused","message":"Failed to request quick Tunnel"}"#;
+        assert_eq!(
+            failure_reason(json_err).as_deref(),
+            Some("Failed to request quick Tunnel: dial tcp: refused")
+        );
+        assert_eq!(
+            failure_reason(r#"{"level":"info","message":"Requesting new quick Tunnel"}"#),
+            None
+        );
+        assert_eq!(failure_reason("  \n"), None);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use tokio::process::{ChildStderr, Command};
 use super::{Tunnel, TunnelHandle};
 use crate::error::{BeamsError, Result};
 use crate::output;
-use crate::parser::{extract_public_url, request_line};
+use crate::parser::{extract_public_url, failure_reason, request_line};
 
 /// Random-URL HTTPS tunnel via `cloudflared` quick tunnel.
 pub struct CloudflareBackend {
@@ -76,19 +76,25 @@ impl Tunnel for CloudflareBackend {
         let mut stderr = BufReader::new(stderr);
         let mut buf = Vec::new();
 
+        // First error cloudflared reports, so a failed start says why it failed
+        // (e.g. a 429 from trycloudflare's rate limit) instead of just "exited".
+        let mut reason = None;
         let found = tokio::time::timeout(Duration::from_secs(30), async {
             while let Some(line) = next_line(&mut stderr, &mut buf).await {
                 if let Some(url) = extract_public_url(&line) {
-                    return Some(url);
+                    return Ok(url);
+                }
+                if reason.is_none() {
+                    reason = failure_reason(&line);
                 }
             }
-            None
+            Err(reason)
         })
         .await
         .map_err(|_| BeamsError::UrlTimeout)?;
 
         match found {
-            Some(url) => {
+            Ok(url) => {
                 // Keep draining stderr for the tunnel's lifetime; if we stop
                 // reading, the pipe closes and cloudflared dies with SIGPIPE on
                 // its next log write, killing the tunnel right after it comes up.
@@ -101,9 +107,10 @@ impl Tunnel for CloudflareBackend {
                 });
                 Ok(TunnelHandle::from_child(url, child))
             }
-            None => Err(BeamsError::TunnelStart(
-                "cloudflared exited without providing a public URL".to_string(),
-            )),
+            Err(reason) => Err(BeamsError::TunnelStart(match reason {
+                Some(r) => format!("cloudflared exited without providing a public URL: {r}"),
+                None => "cloudflared exited without providing a public URL".to_string(),
+            })),
         }
     }
 }
