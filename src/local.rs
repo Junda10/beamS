@@ -40,11 +40,17 @@ pub async fn listening_addr(host: &str, port: u16) -> Option<SocketAddr> {
 }
 
 /// Common dev ports with something listening on them, in `COMMON_PORTS` order.
+pub async fn detect_ports() -> Vec<u16> {
+    live_ports(&COMMON_PORTS).await
+}
+
+/// The given localhost ports that have something listening, in input order.
 /// Probed concurrently — a closed localhost port can take seconds to refuse on
 /// Windows, so a sequential scan would stall.
-pub async fn detect_ports() -> Vec<u16> {
-    let probes: Vec<_> = COMMON_PORTS
-        .into_iter()
+pub async fn live_ports(ports: &[u16]) -> Vec<u16> {
+    let probes: Vec<_> = ports
+        .iter()
+        .copied()
         .map(|port| tokio::spawn(async move { (port, is_listening("localhost", port).await) }))
         .collect();
     let mut live = Vec::new();

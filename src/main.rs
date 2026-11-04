@@ -39,6 +39,10 @@ struct Args {
     /// use `http2` on networks that throttle or block UDP.
     #[arg(long, value_parser = ["quic", "http2", "auto"])]
     protocol: Option<String>,
+
+    /// Open a small web page in your browser to pick a port and share it
+    #[arg(long, conflicts_with_all = ["target", "tcp", "subdomain", "open"])]
+    ui: bool,
 }
 
 /// Resolve when the process is asked to terminate: Ctrl+C (SIGINT), SIGTERM, or
@@ -94,6 +98,18 @@ async fn main() -> anyhow::Result<()> {
         "beams".bold(),
         concat!("v", env!("CARGO_PKG_VERSION")).dimmed()
     );
+
+    if args.ui {
+        // Ending main drops the tunnel tasks, and `kill_on_drop` stops cloudflared.
+        return tokio::select! {
+            result = beams::ui::run(args.protocol.clone()) => result,
+            _ = shutdown_signal() => {
+                println!("
+        Stopping...");
+                Ok(())
+            }
+        };
+    }
 
     // No target given? Use whichever common dev port is actually serving, and
     // let the user choose when more than one is.

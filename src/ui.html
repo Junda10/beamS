@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>beams</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f7f7f5; --fg:#18181b; --muted:#71717a; --card:#fff; --line:#e4e4e7; --accent:#ea580c; --ok:#16a34a; --bad:#dc2626; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111113; --fg:#ececee; --muted:#a1a1aa; --card:#1a1a1d; --line:#2a2a2e; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:600px; margin:48px auto; padding:0 16px; }
+  h1 { margin:0; font-size:28px; letter-spacing:-.02em; }
+  h2 { margin:32px 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  p.sub { margin:4px 0 24px; color:var(--muted); }
+  form { display:flex; gap:8px; }
+  input { flex:1; min-width:0; padding:10px 12px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  button { padding:8px 14px; font:inherit; font-weight:600; border:0; border-radius:8px; background:var(--accent); color:#fff; cursor:pointer; white-space:nowrap; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); font-weight:500; }
+  button:disabled { opacity:.55; cursor:progress; }
+  ul { list-style:none; margin:0; padding:0; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  li { display:flex; align-items:center; gap:8px; padding:10px 12px; border-top:1px solid var(--line); flex-wrap:wrap; }
+  li:first-child { border-top:0; }
+  li .grow { flex:1; min-width:0; overflow-wrap:anywhere; }
+  li.empty { color:var(--muted); }
+  a { color:var(--accent); }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none; }
+  .dot.down { background:var(--accent); }
+  #msg { min-height:1.5em; margin:8px 0 0; color:var(--bad); }
+  #msg.info { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>beams</h1>
+  <p class="sub">Share a local port on a public HTTPS link.</p>
+
+  <form id="manual">
+    <label for="port" hidden>Local port</label>
+    <input id="port" type="number" min="1" max="65535" placeholder="Local port, e.g. 3000" required>
+    <button id="go">Share</button>
+  </form>
+  <p id="msg" role="status"></p>
+
+  <h2>Shared</h2>
+  <ul id="tunnels"></ul>
+
+  <h2>Running on this machine</h2>
+  <ul id="ports"><li class="empty">Scanning…</li></ul>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const pending = new Set();
+let state = { ports: [], tunnels: [] };
+
+function el(tag, props = {}, ...kids) {
+  const n = Object.assign(document.createElement(tag), props);
+  n.append(...kids);
+  return n;
+}
+
+async function api(path, method = 'GET') {
+  const r = await fetch(path, { method, headers: { 'X-Beams': '1' } });
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+
+function msg(text, info) { $('msg').textContent = text; $('msg').className = info ? 'info' : ''; }
+
+function shareButton(port) {
+  const busy = pending.has(port);
+  return el('button', { textContent: busy ? 'Starting…' : 'Share', disabled: busy, onclick: () => share(port) });
+}
+
+function render() {
+  const shared = new Map(state.tunnels.map(t => [t.port, t.url]));
+
+  $('tunnels').replaceChildren(...(state.tunnels.length ? state.tunnels.map(t =>
+    el('li', {},
+      el('span', { className: t.up ? 'dot' : 'dot down' }),
+      el('span', { className: 'grow' }, t.up
+        ? el('a', { href: t.url, target: '_blank', rel: 'noopener', textContent: t.url })
+        : el('span', { className: 'empty', textContent: 'Reconnecting…' }), ` → localhost:${t.port}`),
+      el('button', { className: 'ghost', textContent: 'Copy', onclick: e => navigator.clipboard.writeText(t.url).then(() => e.target.textContent = 'Copied') }),
+      el('button', { className: 'ghost', textContent: 'Stop', onclick: () => stop(t.port) }))
+  ) : [el('li', { className: 'empty', textContent: 'Nothing shared yet.' })]));
+
+  $('ports').replaceChildren(...(state.ports.length ? state.ports.map(p =>
+    el('li', {},
+      el('span', { className: 'grow', textContent: `http://localhost:${p}` }),
+      shared.has(p) ? el('span', { className: 'empty', textContent: 'shared' }) : shareButton(p))
+  ) : [el('li', { className: 'empty', textContent: 'No dev server found on the usual ports — type one above.' })]));
+
+  $('go').disabled = pending.has(+$('port').value);
+}
+
+async function refresh() {
+  try { state = await api('/api/ports'); } catch (e) { msg('Lost connection to beams — is it still running?'); }
+  render();
+}
+
+async function share(port) {
+  pending.add(port); render();
+  msg('Opening a tunnel for port ' + port + ' — this takes a few seconds…', true);
+  try {
+    const r = await api('/api/share?port=' + port, 'POST');
+    msg(r.ready ? '' : 'The link is up but not reachable from here yet. Give it a minute, or flush your DNS cache.', true);
+  } catch (e) { msg(e.message); }
+  pending.delete(port);
+  await refresh();
+}
+
+async function stop(port) {
+  try { await api('/api/stop?port=' + port, 'POST'); } catch (e) { msg(e.message); }
+  await refresh();
+}
+
+$('manual').onsubmit = e => { e.preventDefault(); share(+$('port').value); };
+$('port').oninput = render;
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

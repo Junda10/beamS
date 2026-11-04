@@ -52,6 +52,7 @@ server stops.
 ## More options
 
 ```bash
+beams --ui                     # pick and share ports from a web page
 beams 3000 --open              # also open the link in your browser
 beams 3000 --subdomain myapp   # pick the name: https://myapp.loca.lt
 beams 22 --tcp                 # share a raw TCP port (SSH, databases)
