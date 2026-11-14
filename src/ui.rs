@@ -156,7 +156,7 @@ async fn route(req: &str, state: &Arc<State>) -> Reply {
                 .lock()
                 .unwrap()
                 .iter()
-                .map(|(port, a)| json!({ "port": port, "url": a.url, "up": a.up }))
+                .map(|(port, a)| json!({ "port": port, "url": a.url, "up": a.up, "qr": qr_svg(&a.url) }))
                 .collect();
             let body = json!({ "ports": ports, "tunnels": tunnels });
             ("200 OK", "application/json", body.to_string())
@@ -178,6 +178,14 @@ async fn route(req: &str, state: &Arc<State>) -> Reply {
         ("POST", _, None) => error("400 Bad Request", "pass a port between 1 and 65535"),
         _ => error("404 Not Found", "not found"),
     }
+}
+
+/// The link as a QR code (SVG markup) for a phone to scan; empty if it won't fit.
+fn qr_svg(url: &str) -> String {
+    use qrcode::render::svg;
+    qrcode::QrCode::new(url.as_bytes())
+        .map(|code| code.render::<svg::Color>().min_dimensions(160, 160).build())
+        .unwrap_or_default()
 }
 
 /// Open a Cloudflare quick tunnel to `localhost:port`; returns `(url, ready)`.
@@ -216,6 +224,10 @@ async fn share(port: u16, state: &Arc<State>) -> Result<(String, bool), String> 
     );
     drop(previous); // a racing second share of the same port replaces the first
     println!("  ✓ Sharing {host}:{port} at {url}");
+
+    // Copied here, not in the page: by the time the tunnel is up the browser no
+    // longer counts the click as a user gesture and refuses clipboard writes.
+    local::copy_to_clipboard(&url).await;
 
     tokio::spawn(keep_alive(
         port,

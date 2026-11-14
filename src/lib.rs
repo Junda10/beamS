@@ -5,5 +5,6 @@ pub mod local;
 pub mod output;
 pub mod parser;
 pub mod ready;
+pub mod serve;
 pub mod tunnel;
 pub mod ui;

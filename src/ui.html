@@ -26,6 +26,7 @@
   a { color:var(--accent); }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none; }
   .dot.down { background:var(--accent); }
+  .qr { flex-basis:100%; width:160px; height:160px; object-fit:contain; object-position:left; background:#fff; padding:6px; border-radius:6px; }
   #msg { min-height:1.5em; margin:8px 0 0; color:var(--bad); }
   #msg.info { color:var(--muted); }
 </style>
@@ -83,7 +84,8 @@ function render() {
         ? el('a', { href: t.url, target: '_blank', rel: 'noopener', textContent: t.url })
         : el('span', { className: 'empty', textContent: 'Reconnecting…' }), ` → localhost:${t.port}`),
       el('button', { className: 'ghost', textContent: 'Copy', onclick: e => navigator.clipboard.writeText(t.url).then(() => e.target.textContent = 'Copied') }),
-      el('button', { className: 'ghost', textContent: 'Stop', onclick: () => stop(t.port) }))
+      el('button', { className: 'ghost', textContent: 'Stop', onclick: () => stop(t.port) }),
+      t.up && t.qr ? el('img', { className: 'qr', alt: 'QR code for ' + t.url, src: 'data:image/svg+xml,' + encodeURIComponent(t.qr) }) : '')
   ) : [el('li', { className: 'empty', textContent: 'Nothing shared yet.' })]));
 
   $('ports').replaceChildren(...(state.ports.length ? state.ports.map(p =>
@@ -105,7 +107,7 @@ async function share(port) {
   msg('Opening a tunnel for port ' + port + ' — this takes a few seconds…', true);
   try {
     const r = await api('/api/share?port=' + port, 'POST');
-    msg(r.ready ? '' : 'The link is up but not reachable from here yet. Give it a minute, or flush your DNS cache.', true);
+    msg(r.ready ? 'Link copied to your clipboard — scan the QR code to open it on a phone.' : 'The link is up but not reachable from here yet. Give it a minute, or flush your DNS cache.', true);
   } catch (e) { msg(e.message); }
   pending.delete(port);
   await refresh();

@@ -19,7 +19,8 @@ use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel};
     about = "Share your localhost with the world — free, friendly, for everyone"
 )]
 struct Args {
-    /// Port or local address, e.g. 3000 or http://localhost:3000.
+    /// Port or local address, e.g. 3000 or http://localhost:3000 — or a folder
+    /// of built files, e.g. ./dist, which beams serves itself.
     /// Omit it and beams looks for a dev server on the usual ports.
     target: Option<String>,
 
@@ -114,6 +115,17 @@ async fn main() -> anyhow::Result<()> {
     // No target given? Use whichever common dev port is actually serving, and
     // let the user choose when more than one is.
     let mut target = match args.target.clone() {
+        // A folder (a built site): serve it ourselves, then share that port.
+        Some(t) if cli::parse_host_port(&t).is_err() && std::path::Path::new(&t).is_dir() => {
+            if !std::path::Path::new(&t).join("index.html").is_file() {
+                anyhow::bail!(
+                    "no index.html in {t} — point beams at your build output (often dist, build or out)"
+                );
+            }
+            let port = beams::serve::spawn(std::path::Path::new(&t)).await?;
+            println!("  {} Serving {t} on port {port}", "✓".green());
+            port.to_string()
+        }
         Some(t) => t,
         None => {
             let live = local::detect_ports().await;

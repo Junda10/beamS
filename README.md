@@ -13,7 +13,8 @@ You need [Node.js](https://nodejs.org) (for `npm`). Then:
 npm install -g beams-cli
 ```
 
-The package is called `beams-cli`, but the command is `beams`.
+The package is called `beams-cli`, but the command is `beams`. Careful:
+`npx beams` (without `-cli`) runs someone else's unrelated package.
 
 Don't want to install? Run it once with `npx beams-cli`.
 
@@ -52,7 +53,8 @@ server stops.
 ## More options
 
 ```bash
-beams --ui                     # pick and share ports from a web page
+beams ./dist                   # share a folder of built files (no server needed)
+beams --ui                     # pick and share ports from a web page, with QR codes
 beams 3000 --open              # also open the link in your browser
 beams 3000 --subdomain myapp   # pick the name: https://myapp.loca.lt
 beams 22 --tcp                 # share a raw TCP port (SSH, databases)
