@@ -10,6 +10,9 @@ pub enum BeamsError {
     TunnelStart(String),
     #[error("{0}")]
     Blocked(String),
+    /// The relay is refusing new tunnels from this network for now.
+    #[error("failed to start tunnel: {0}")]
+    RateLimited(String),
     #[error("timed out waiting for the public address (none within 30s)")]
     UrlTimeout,
     #[error(transparent)]

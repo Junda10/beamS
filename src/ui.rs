@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use crate::binary::{self, Tool};
 use crate::local;
 use crate::ready;
-use crate::tunnel::{CloudflareBackend, Tunnel, TunnelHandle};
+use crate::tunnel::{self, Fallback, Tunnel, TunnelHandle};
 
 const PAGE: &str = include_str!("ui.html");
 
@@ -206,11 +206,13 @@ async fn share(port: u16, state: &Arc<State>) -> Result<(String, bool), String> 
     let binary = binary::ensure_binary(Tool::Cloudflared)
         .await
         .map_err(|e| e.to_string())?;
-    let backend = CloudflareBackend {
+    let backend = tunnel::quick(
         binary,
-        target: format!("http://{host}:{port}"),
-        protocol: state.protocol.clone(),
-    };
+        format!("http://{host}:{port}"),
+        &host,
+        port,
+        state.protocol.clone(),
+    );
     let (handle, url, ready) = dial(&backend).await?;
 
     let (stop, stopped) = oneshot::channel();
@@ -242,7 +244,7 @@ async fn share(port: u16, state: &Arc<State>) -> Result<(String, bool), String> 
 
 /// Start a tunnel and wait until its public URL answers. `ready` is false when
 /// the wait gave up; the link usually starts working shortly after.
-async fn dial(backend: &CloudflareBackend) -> Result<(TunnelHandle, String, bool), String> {
+async fn dial(backend: &Fallback) -> Result<(TunnelHandle, String, bool), String> {
     let mut handle = backend.start().await.map_err(|e| e.to_string())?;
     let url = handle.public_url().to_string();
     let ready = tokio::select! {
@@ -260,7 +262,7 @@ async fn dial(backend: &CloudflareBackend) -> Result<(TunnelHandle, String, bool
 /// `kill_on_drop` ends cloudflared.
 async fn keep_alive(
     port: u16,
-    backend: CloudflareBackend,
+    backend: Fallback,
     mut handle: TunnelHandle,
     mut url: String,
     mut stopped: oneshot::Receiver<()>,

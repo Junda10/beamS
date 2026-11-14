@@ -85,6 +85,7 @@ function render() {
         : el('span', { className: 'empty', textContent: 'Reconnecting…' }), ` → localhost:${t.port}`),
       el('button', { className: 'ghost', textContent: 'Copy', onclick: e => navigator.clipboard.writeText(t.url).then(() => e.target.textContent = 'Copied') }),
       el('button', { className: 'ghost', textContent: 'Stop', onclick: () => stop(t.port) }),
+      t.up && t.url.includes('.loca.lt') ? el('span', { className: 'empty', style: 'flex-basis:100%', textContent: 'Cloudflare is rate-limiting you, so this link uses localtunnel: visitors are asked once for a password, shown in the beams terminal.' }) : '',
       t.up && t.qr ? el('img', { className: 'qr', alt: 'QR code for ' + t.url, src: 'data:image/svg+xml,' + encodeURIComponent(t.qr) }) : '')
   ) : [el('li', { className: 'empty', textContent: 'Nothing shared yet.' })]));
 

@@ -33,6 +33,52 @@ pub trait Tunnel {
     async fn start(&self) -> Result<TunnelHandle>;
 }
 
+type AnyTunnel = Box<dyn Tunnel + Send + Sync>;
+
+/// Use `primary`, and `fallback` whenever `primary`'s relay is rate-limiting us.
+/// Each start tries `primary` again, so a reconnect goes back to it once the
+/// limit lifts.
+pub struct Fallback {
+    pub primary: AnyTunnel,
+    pub fallback: AnyTunnel,
+}
+
+#[async_trait::async_trait]
+impl Tunnel for Fallback {
+    async fn start(&self) -> Result<TunnelHandle> {
+        match self.primary.start().await {
+            Err(BeamsError::RateLimited(why)) => {
+                println!("  ! {why} — using localtunnel instead");
+                self.fallback.start().await
+            }
+            other => other,
+        }
+    }
+}
+
+/// The default HTTPS tunnel: a Cloudflare quick tunnel, or localtunnel with a
+/// server-chosen name while Cloudflare is rate-limiting this network.
+pub fn quick(
+    binary: std::path::PathBuf,
+    target: String,
+    local_host: &str,
+    local_port: u16,
+    protocol: Option<String>,
+) -> Fallback {
+    Fallback {
+        primary: Box::new(CloudflareBackend {
+            binary,
+            target,
+            protocol,
+        }),
+        fallback: Box::new(LocaltunnelBackend {
+            subdomain: "?new".to_string(),
+            local_host: local_host.to_string(),
+            local_port,
+        }),
+    }
+}
+
 // One of these exists per process, so the size difference between the variants
 // costs nothing; boxing the `Child` would only add an allocation.
 #[allow(clippy::large_enum_variant)]
@@ -99,6 +145,32 @@ impl TunnelHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Fake(Option<&'static str>);
+
+    #[async_trait::async_trait]
+    impl Tunnel for Fake {
+        async fn start(&self) -> Result<TunnelHandle> {
+            match self.0 {
+                Some(url) => Ok(TunnelHandle::from_task(
+                    url.to_string(),
+                    tokio::sync::broadcast::channel(1).0,
+                )),
+                None => Err(BeamsError::RateLimited("429".into())),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_only_when_rate_limited() {
+        let pair = |primary| Fallback {
+            primary: Box::new(Fake(primary)),
+            fallback: Box::new(Fake(Some("https://b"))),
+        };
+        let url = |f: Fallback| async move { f.start().await.unwrap().public_url().to_string() };
+        assert_eq!(url(pair(Some("https://a"))).await, "https://a");
+        assert_eq!(url(pair(None)).await, "https://b");
+    }
 
     #[test]
     fn antivirus_block_gets_its_own_error() {

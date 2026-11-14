@@ -22,6 +22,7 @@ pub struct LocaltunnelBackend {
 impl Tunnel for LocaltunnelBackend {
     async fn start(&self) -> Result<TunnelHandle> {
         // 1. Ask the server to assign our subdomain.
+        // `?new` in place of a name asks the server to pick one.
         let assign_url = format!("https://{SERVER}/{}", self.subdomain);
         let body = reqwest::Client::new()
             .get(&assign_url)
@@ -71,8 +72,31 @@ impl Tunnel for LocaltunnelBackend {
             });
         }
 
+        // loca.lt shows browsers a warning page that asks for this password
+        // (the host's public IP) once per visitor; without it they are stuck.
+        if let Some(password) = visitor_password().await {
+            println!("  ! Visitors to {url} are asked for a tunnel password once: {password}");
+        }
+
         Ok(TunnelHandle::from_task(url, shutdown))
     }
+}
+
+async fn visitor_password() -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let body = client
+        .get("https://loca.lt/mytunnelpassword")
+        .send()
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+    let password = body.trim();
+    (!password.is_empty() && password.len() < 64).then(|| password.to_string())
 }
 
 /// Open one relay connection (server <-> local) and pipe bytes both ways until

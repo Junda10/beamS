@@ -10,7 +10,7 @@ use beams::cli;
 use beams::error::BeamsError;
 use beams::local;
 use beams::output;
-use beams::tunnel::{BoreBackend, CloudflareBackend, LocaltunnelBackend, Tunnel};
+use beams::tunnel::{self, BoreBackend, LocaltunnelBackend, Tunnel};
 
 #[derive(Parser)]
 #[command(
@@ -186,11 +186,13 @@ async fn main() -> anyhow::Result<()> {
         })
     } else {
         let bin = binary::ensure_binary(Tool::Cloudflared).await?;
-        Box::new(CloudflareBackend {
-            binary: bin,
-            target: cli::parse_target(&target)?,
-            protocol: args.protocol.clone(),
-        })
+        Box::new(tunnel::quick(
+            bin,
+            cli::parse_target(&target)?,
+            &host,
+            port,
+            args.protocol.clone(),
+        ))
     };
 
     let forward = format!("{host}:{port}");

@@ -70,6 +70,9 @@ beams 3000 --protocol http2    # use this if the link is slow or keeps dropping
   `ipconfig /flushdns` (Windows), `sudo killall -HUP mDNSResponder` (macOS).
 - **Slow or keeps disconnecting** — try `--protocol http2`. Some Wi-Fi and
   office networks block the default connection type.
+- **A `loca.lt` link and a password** — Cloudflare limits how many free tunnels one
+  network can open. When it refuses, beams switches to localtunnel by itself;
+  visitors are asked once for the password beams prints (your public IP).
 - The link changes every time you run `beams`. If the connection drops, beams
   reconnects by itself and prints the new link.
 

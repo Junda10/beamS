@@ -107,6 +107,11 @@ impl Tunnel for CloudflareBackend {
                 });
                 Ok(TunnelHandle::from_child(url, child))
             }
+            // trycloudflare limits new quick tunnels per IP (error code 1015) and
+            // keeps refusing for minutes, far longer than a retry loop waits.
+            Err(Some(r)) if r.contains("status 429") => Err(BeamsError::RateLimited(format!(
+                "Cloudflare is rate-limiting new tunnels from your network ({r})"
+            ))),
             Err(reason) => Err(BeamsError::TunnelStart(match reason {
                 Some(r) => format!("cloudflared exited without providing a public URL: {r}"),
                 None => "cloudflared exited without providing a public URL".to_string(),
