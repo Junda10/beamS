@@ -26,7 +26,7 @@ impl Tunnel for BoreBackend {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| BeamsError::TunnelStart(e.to_string()))?;
+            .map_err(|e| super::spawn_error(&self.binary, e))?;
 
         let stdout = child
             .stdout

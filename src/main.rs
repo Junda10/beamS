@@ -223,6 +223,8 @@ async fn main() -> anyhow::Result<()> {
                     failures = 0;
                     started
                 }
+                // Retrying can't unblock a binary the antivirus refuses to run.
+                Err(e @ BeamsError::Blocked(_)) => return Err(e.into()),
                 Err(e) => {
                     failures += 1;
                     if failures >= 5 {

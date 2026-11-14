@@ -8,6 +8,8 @@ pub enum BeamsError {
     Download(String),
     #[error("failed to start tunnel: {0}")]
     TunnelStart(String),
+    #[error("{0}")]
+    Blocked(String),
     #[error("timed out waiting for the public address (none within 30s)")]
     UrlTimeout,
     #[error(transparent)]

@@ -68,7 +68,7 @@ impl Tunnel for CloudflareBackend {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| BeamsError::TunnelStart(e.to_string()))?;
+            .map_err(|e| super::spawn_error(&self.binary, e))?;
 
         let stderr = child.stderr.take().ok_or_else(|| {
             BeamsError::TunnelStart("could not read cloudflared output".to_string())
