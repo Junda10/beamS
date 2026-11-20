@@ -8,3 +8,4 @@ pub mod ready;
 pub mod serve;
 pub mod tunnel;
 pub mod ui;
+pub mod update;

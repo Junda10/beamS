@@ -99,6 +99,13 @@ async fn main() -> anyhow::Result<()> {
         "beams".bold(),
         concat!("v", env!("CARGO_PKG_VERSION")).dimmed()
     );
+    if let Some(latest) = beams::update::check() {
+        println!(
+            "  {} v{latest} is out · update with {}",
+            "↑".yellow(),
+            "npm install -g beams-cli@latest".bold()
+        );
+    }
 
     if args.ui {
         // Ending main drops the tunnel tasks, and `kill_on_drop` stops cloudflared.
@@ -262,7 +269,7 @@ async fn main() -> anyhow::Result<()> {
             if args.tcp {
                 output::print_tcp_banner(&public_url, port, copied, ready);
             } else {
-                output::print_banner(&public_url, &forward, copied, ready)?;
+                output::print_banner(&public_url, &forward, copied, ready);
                 if args.open && first_run {
                     local::open_in_browser(&public_url);
                 }
